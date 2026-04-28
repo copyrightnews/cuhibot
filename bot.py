@@ -99,55 +99,55 @@ def total_sent(uid):
 
 # ── MENU TEXT ─────────────────────────────────────────────────────────────────
 def menu_text(uid, username, name):
-    ch = get_channel(uid)
-    ch_line = f"  📡 Output channel : *{ch}*\n" if ch else ""
+    ch      = get_channel(uid)
+    ch_line = f"\n📡 Output: *{ch}*" if ch else ""
     return (
-        f"@{username} — {name}\n"
+        f"@{username}, {name}\n"
         f"🪪 ID: `{uid}`\n"
         f"🆓 Free account\n"
         f"✅ Downloaded Media: *{total_sent(uid)}*\n\n"
-        "📩 *Cuhi Bot* — One of the best media downloaders from social networks "
-        "(TikTok, Instagram, Twitter/X, Reddit, Facebook) to Telegram\\.\n\n"
+        "📩 *Cuhi Bot* — One of the best forwarders from RSS and social networks "
+        "(TikTok, Instagram, YouTube, Twitter, Reddit, Facebook, Telegram, VK) to Telegram.\n\n"
         "*Features:*\n"
         "🔀 Private or channel/group modes\n"
         "🔖 Photos, videos and files delivery\n"
         "🚀 Direct Telegram connection\n"
-        "⚡️ Fast real\\-time delivery\n"
-        "✂️ Stories & Highlights download\n"
-        "🎙 Live streams & premieres support\n"
-        "🕵️ Moderation and butler modes\n"
+        "🤩 Custom Emojis\n"
+        "⚡️ Fast refresh rate\n"
+        "✂️ Filters, replacements, message templates, text splitting, etc..\n"
+        "🎙 Live streams and premieres processing for videos\n"
+        "🕵️\u200d♂️ Moderation and butler modes\n"
         "♻️ Similarity filter\n"
         "🗂 Temporal channel for filtered messages\n"
         "©️ Images watermarks\n"
         "🆘 Technical support\n"
         "👥 Referral program\n\n"
         "*How to Use:*\n"
-        "— Add a data source via ➕ Add source\n"
-        "— Set cookies via 🍪 Set cookies\n"
-        "— Tap 🚀 Run download and choose type\n"
-        "— Bot will forward & download automatically\\!\n\n"
-        f"{ch_line}"
+        "— Add a data source (RSS, Instagram, TikTok, etc.)\n"
+        "— Configure message template and filters\n"
+        "— Bot will forward & download new posts automatically!\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"  🗂 Sources queued : *{source_count(uid)}*\n"
-        f"  🍪 Cookies ready  : *{cookie_status(uid)}*\n"
+        f"  🗂 Sources : *{source_count(uid)}*\n"
+        f"  🍪 Cookies : *{cookie_status(uid)}*"
+        f"{ch_line}\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "👨‍💻 Developer: @copyrightpost"
+        "👨\u200d💻 Developer: @copyrightpost"
     )
 
 # ── KEYBOARDS ─────────────────────────────────────────────────────────────────
 def main_menu_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Add source",      callback_data="m_add"),
-         InlineKeyboardButton("🗑️ Remove source",  callback_data="m_remove")],
-        [InlineKeyboardButton("📋 My sources",      callback_data="m_list"),
-         InlineKeyboardButton("🚀 Run download",    callback_data="m_run")],
-        [InlineKeyboardButton("📖 Stories",         callback_data="m_stories"),
-         InlineKeyboardButton("🌟 Highlights",      callback_data="m_highlights")],
-        [InlineKeyboardButton("⏹️ Stop",            callback_data="m_stop"),
-         InlineKeyboardButton("📜 History",         callback_data="m_history")],
-        [InlineKeyboardButton("🍪 Set cookies",     callback_data="m_cookies"),
-         InlineKeyboardButton("📊 Status",          callback_data="m_status")],
-        [InlineKeyboardButton("📡 Set channel",     callback_data="m_channel")],
+        [InlineKeyboardButton("➕ Add source",       callback_data="m_add"),
+         InlineKeyboardButton("🗑️ Remove source",   callback_data="m_remove")],
+        [InlineKeyboardButton("📋 My sources",       callback_data="m_list"),
+         InlineKeyboardButton("🚀 Run download",     callback_data="m_run")],
+        [InlineKeyboardButton("📖 Stories",          callback_data="m_stories"),
+         InlineKeyboardButton("🌟 Highlights",       callback_data="m_highlights")],
+        [InlineKeyboardButton("⏹️ Stop download",    callback_data="m_stop"),
+         InlineKeyboardButton("📜 History",          callback_data="m_history")],
+        [InlineKeyboardButton("🍪 Set cookies",      callback_data="m_cookies"),
+         InlineKeyboardButton("📊 Status",           callback_data="m_status")],
+        [InlineKeyboardButton("📡 Set channel",      callback_data="m_channel")],
     ])
 
 def platform_kb(prefix):
@@ -173,9 +173,9 @@ async def show_menu(msg, uid, username, name, edit=False):
     text = menu_text(uid, username, name)
     try:
         if edit:
-            await msg.edit_text(text, reply_markup=main_menu_kb(), parse_mode="MarkdownV2")
+            await msg.edit_text(text, reply_markup=main_menu_kb(), parse_mode="Markdown")
         else:
-            await msg.reply_text(text, reply_markup=main_menu_kb(), parse_mode="MarkdownV2")
+            await msg.reply_text(text, reply_markup=main_menu_kb(), parse_mode="Markdown")
     except Exception:
         # Fallback plain markdown if MarkdownV2 fails
         plain = (
