@@ -103,8 +103,8 @@ def menu_text(uid, username, name):
     ch_line = f"\n📡 Output: *{ch}*" if ch else ""
     return (
         f"@{username}, {name}\n"
-        f"🪪 ID: `{uid}`\n"
-        f"🆓 Free account\n"
+        f"👤 ID: `{uid}`\n"
+        f"🧾 Free account\n"
         f"✅ Downloaded Media: *{total_sent(uid)}*\n\n"
         "📩 *Cuhi Bot* — One of the best forwarders from RSS and social networks "
         "(TikTok, Instagram, YouTube, Twitter, Reddit, Facebook, Telegram, VK) to Telegram.\n\n"
@@ -131,7 +131,7 @@ def menu_text(uid, username, name):
         f"  🍪 Cookies : *{cookie_status(uid)}*"
         f"{ch_line}\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "👨\u200d💻 Developer: @copyrightpost"
+        "👤\u200d💻 Developer: @copyrightpost"
     )
 
 # ── KEYBOARDS ─────────────────────────────────────────────────────────────────
