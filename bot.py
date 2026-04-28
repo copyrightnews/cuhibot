@@ -138,8 +138,8 @@ def menu_text(uid, username, name):
 def main_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Add source",       callback_data="m_add"),
-         InlineKeyboardButton("🗑️ Remove source",   callback_data="m_remove")],
-        [InlineKeyboardButton("📋 My sources",       callback_data="m_list"),
+         InlineKeyboardButton("🚫 Remove source",   callback_data="m_remove")],
+        [InlineKeyboardButton("🌐 My sources",       callback_data="m_list"),
          InlineKeyboardButton("✅ Run download",     callback_data="m_run")],
         [InlineKeyboardButton("📖 Stories",          callback_data="m_stories"),
          InlineKeyboardButton("✨ Highlights",       callback_data="m_highlights")],
