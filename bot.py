@@ -140,10 +140,10 @@ def main_menu_kb():
         [InlineKeyboardButton("➕ Add source",       callback_data="m_add"),
          InlineKeyboardButton("🗑️ Remove source",   callback_data="m_remove")],
         [InlineKeyboardButton("📋 My sources",       callback_data="m_list"),
-         InlineKeyboardButton("🚀 Run download",     callback_data="m_run")],
+         InlineKeyboardButton("✅ Run download",     callback_data="m_run")],
         [InlineKeyboardButton("📖 Stories",          callback_data="m_stories"),
-         InlineKeyboardButton("🌟 Highlights",       callback_data="m_highlights")],
-        [InlineKeyboardButton("⏹️ Stop download",    callback_data="m_stop"),
+         InlineKeyboardButton("✨ Highlights",       callback_data="m_highlights")],
+        [InlineKeyboardButton("🚫 Stop download",    callback_data="m_stop"),
          InlineKeyboardButton("📜 History",          callback_data="m_history")],
         [InlineKeyboardButton("🍪 Set cookies",      callback_data="m_cookies"),
          InlineKeyboardButton("📊 Status",           callback_data="m_status")],
@@ -158,9 +158,9 @@ def platform_kb(prefix):
 
 def media_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📷 Photos only",       callback_data="dl_1")],
+        [InlineKeyboardButton("🖼️ Photos only",       callback_data="dl_1")],
         [InlineKeyboardButton("🎬 Videos only",       callback_data="dl_2")],
-        [InlineKeyboardButton("📦 Both (separately)", callback_data="dl_3")],
+        [InlineKeyboardButton("🔖 Both (separately)", callback_data="dl_3")],
         [InlineKeyboardButton("📁 Files (as docs)",   callback_data="dl_4")],
         [InlineKeyboardButton("🔙 Back",              callback_data="m_back")],
     ])
@@ -183,7 +183,7 @@ async def show_menu(msg, uid, username, name, edit=False):
             f"ID: `{uid}` | Free account\n"
             f"✅ Downloaded Media: *{total_sent(uid)}*\n\n"
             "📩 *Cuhi Bot* — Media Downloader\n\n"
-            f"🗂 Sources: *{source_count(uid)}*\n"
+            f"🌐 Sources: *{source_count(uid)}*\n"
             f"🍪 Cookies: *{cookie_status(uid)}*"
         )
         if edit:
@@ -250,10 +250,10 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 "⚠️ No sources yet. Add one first.", reply_markup=back_kb())
             return ST_MAIN
         await q.message.edit_text(
-            "🚀 *What to download?*\n\n"
-            "📷 *Photos only* — sends as images\n"
+            "❔ *What to download?*\n\n"
+            "🖼️ *Photos only* — sends as images\n"
             "🎬 *Videos only* — sends as videos\n"
-            "📦 *Both* — photos first then videos\n"
+            "🔖 *Both* — photos first then videos\n"
             "📁 *Files* — sends everything as documents",
             reply_markup=media_kb(), parse_mode="Markdown")
         return ST_MEDIA_CHOICE
@@ -268,7 +268,7 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # ── HIGHLIGHTS ──
     if data == "m_highlights":
         await q.message.edit_text(
-            "🌟 *Download Highlights*\nChoose platform:",
+            "✨ *Download Highlights*\nChoose platform:",
             reply_markup=platform_kb("highlight"), parse_mode="Markdown")
         return ST_HIGHLIGHT_PLAT
 
@@ -278,7 +278,7 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if ev and not ev.is_set():
             ev.set()
             await q.message.edit_text(
-                "⏹️ *Stop signal sent.*\nFinishing current album then stopping.",
+                "🚫 *Stop signal sent.*\nFinishing current album then stopping.",
                 reply_markup=back_kb(), parse_mode="Markdown")
         else:
             await q.message.edit_text("Nothing is running.", reply_markup=back_kb())
@@ -388,7 +388,7 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         platform = data.split("_", 1)[1]
         ctx.user_data["highlight_platform"] = platform
         await q.message.edit_text(
-            f"🌟 *Download {platform.capitalize()} Highlights*\n\n"
+            f"✨ *Download {platform.capitalize()} Highlights*\n\n"
             f"Send the profile URL:\n`{PLATFORM_URLS[platform]}username/`",
             reply_markup=back_kb(), parse_mode="Markdown")
         return ST_HIGHLIGHT_URL
@@ -649,8 +649,8 @@ async def do_download(msg, choice: str, uid: int, uname: str, name: str, bot):
     stop = STOP_EVENTS.get(uid, asyncio.Event())
     mode_map = {"1": "photos", "2": "videos", "3": "both", "4": "documents"}
     mode  = mode_map.get(choice, "photos")
-    label = {"photos": "📷 Photos", "videos": "🎬 Videos",
-             "both": "📦 Both", "documents": "📁 Files"}[mode]
+    label = {"photos": "🖼️ Photos", "videos": "🎬 Videos",
+             "both": "🔖 Both", "documents": "📁 Files"}[mode]
 
     channel     = get_channel(uid)
     send_target = (bot, channel) if channel else msg
@@ -692,7 +692,7 @@ async def do_download(msg, choice: str, uid: int, uname: str, name: str, bot):
                     })
 
     elapsed = (datetime.now() - start).seconds
-    final   = (f"⏹️ *Stopped.* {total} file(s) in {elapsed}s."
+    final   = (f"🚫 *Stopped.* {total} file(s) in {elapsed}s."
                if stop.is_set() else
                f"✅ *Done!* {total} file(s) in {elapsed}s.")
     try:
@@ -707,7 +707,7 @@ async def do_download(msg, choice: str, uid: int, uname: str, name: str, bot):
 async def do_special_download(msg, url: str, platform: str,
                                mode: str, uid: int, uname: str, name: str, bot):
     stop        = STOP_EVENTS.get(uid, asyncio.Event())
-    label       = "📖 Stories" if mode == "stories" else "🌟 Highlights"
+    label       = "📖 Stories" if mode == "stories" else "✨ Highlights"
     channel     = get_channel(uid)
     send_target = (bot, channel) if channel else msg
     user_handle = url.rstrip("/").split("/")[-1].lstrip("@")
