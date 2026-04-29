@@ -3,7 +3,7 @@ FROM python:3.11-slim
 
 LABEL maintainer="naimurnstu" \
       description="Cuhi Bot — Telegram media downloader (Instagram/TikTok/Facebook/X)" \
-      version="1.2.2"
+      version="1.2.3"
 
 # ── System dependencies ─────────────────────────────────────────────────────────
 # ffmpeg  : video processing (gallery-dl post-processors)

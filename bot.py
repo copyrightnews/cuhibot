@@ -720,11 +720,12 @@ async def flush(target, batch: list[Path], send_as: str) -> int:
 
         else:
             for chunk in _split_mixed(batch):
-                # Pre-check: skip media group if total size exceeds Telegram's
-                # ~50 MB limit — go straight to individual sends to avoid 413.
-                chunk_bytes = sum(
-                    (f.stat().st_size if f.exists() else 0) for f in chunk
-                )
+                chunk_bytes = 0
+                for f in chunk:
+                    try:
+                        chunk_bytes += f.stat().st_size if f.exists() else 0
+                    except OSError:
+                        pass
                 if chunk_bytes > TELEGRAM_FILE_LIMIT:
                     logger.info(
                         "Chunk %.1f MB exceeds 50 MB — sending %d files individually",
@@ -738,7 +739,6 @@ async def flush(target, batch: list[Path], send_as: str) -> int:
                     continue
 
                 file_handles: list = []
-                group_ok = False
                 try:
                     handles = []
                     if send_as == "photos":
@@ -763,7 +763,6 @@ async def flush(target, batch: list[Path], send_as: str) -> int:
                                 handles.append(InputMediaVideo(fh))
                         group = handles
                     await _send_group(target, group)
-                    group_ok = True
                     sent += len(chunk)
                     sent_files.extend(chunk)
                 except Exception:
@@ -933,8 +932,22 @@ async def realtime_download(
                 force=True,
             )
     finally:
-        # Wipe the per-run download dir only. Archive remains persistent.
-        shutil.rmtree(out_dir, ignore_errors=True)
+        # Clean up non-media temp files; keep unsent media for automatic
+        # retry on the next run.  (shutil.rmtree would destroy files that
+        # flush() deliberately kept because they failed to send.)
+        if out_dir.exists():
+            all_media_ext = PHOTO_EXT | VIDEO_EXT
+            for f in list(out_dir.iterdir()):
+                if f.is_file() and f.suffix.lower() not in all_media_ext:
+                    try:
+                        f.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            # Remove dir only if empty (all media was sent or no files)
+            try:
+                out_dir.rmdir()
+            except OSError:
+                pass  # still has unsent media — leave it
         # Kill process if still running
         if proc.returncode is None:
             try:
