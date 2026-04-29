@@ -257,69 +257,100 @@ The bot auto-detects and saves cookies for the correct platform.
 └── README.md           # This file
 ```
 
-## Contributors
+## Core Team
 
 <table>
   <tr>
-    <td align="center">
+    <td align="center" width="50%">
       <a href="https://github.com/ebnycuhie">
-        <img src="https://github.com/ebnycuhie.png" width="100px;" alt="ebnycuhie" /><br />
-        <sub><b>ebnycuhie</b></sub>
-      </a><br />
-      🛠️ Developer &amp; Maintainer<br /><br />
-      <a href="https://github.com/ebnycuhie"><img src="https://img.shields.io/badge/GitHub-ebnycuhie-181717?style=flat-square&logo=github" /></a><br />
-      <a href="https://instagram.com/ebnycuhie"><img src="https://img.shields.io/badge/Instagram-ebnycuhie-E4405F?style=flat-square&logo=instagram&logoColor=white" /></a><br />
-      <a href="https://t.me/ebnycuhie"><img src="https://img.shields.io/badge/Telegram-ebnycuhie-26A5E4?style=flat-square&logo=telegram&logoColor=white" /></a><br />
-      <a href="mailto:ebnycuhie@gmail.com"><img src="https://img.shields.io/badge/Email-ebnycuhie@gmail.com-D14836?style=flat-square&logo=gmail&logoColor=white" /></a>
+        <img src="https://github.com/ebnycuhie.png" width="120px;" style="border-radius:50%;" alt="ebnycuhie" />
+      </a>
+      <br />
+      <a href="https://github.com/ebnycuhie"><strong>ebnycuhie</strong></a>
+      <br />
+      <sub>Co-Founder &amp; Lead Developer</sub>
+      <br /><br />
+      <a href="https://github.com/ebnycuhie" title="Code">💻</a>
+      <a href="https://github.com/naimurnstu/x/commits?author=ebnycuhie" title="Bug Fixes">🐛</a>
+      <a href="#" title="Security">🔒</a>
+      <a href="#" title="Documentation">📖</a>
+      <a href="#" title="Infrastructure">🚇</a>
+      <br /><br />
+      <a href="https://github.com/ebnycuhie"><img src="https://img.shields.io/badge/-ebnycuhie-181717?style=flat&logo=github&logoColor=white" /></a>
+      <a href="https://instagram.com/ebnycuhie"><img src="https://img.shields.io/badge/-ebnycuhie-E4405F?style=flat&logo=instagram&logoColor=white" /></a>
+      <a href="https://t.me/ebnycuhie"><img src="https://img.shields.io/badge/-ebnycuhie-26A5E4?style=flat&logo=telegram&logoColor=white" /></a>
+      <a href="mailto:ebnycuhie@gmail.com"><img src="https://img.shields.io/badge/-Email-D14836?style=flat&logo=gmail&logoColor=white" /></a>
     </td>
-    <td align="center">
+    <td align="center" width="50%">
       <a href="https://github.com/sayfalse">
-        <img src="https://github.com/sayfalse.png" width="100px;" alt="sayfalse" /><br />
-        <sub><b>sayfalse</b></sub>
-      </a><br />
-      🛠️ Developer &amp; Maintainer<br /><br />
-      <a href="https://github.com/sayfalse"><img src="https://img.shields.io/badge/GitHub-sayfalse-181717?style=flat-square&logo=github" /></a><br />
-      <a href="https://instagram.com/sudoflame"><img src="https://img.shields.io/badge/Instagram-sudoflame-E4405F?style=flat-square&logo=instagram&logoColor=white" /></a><br />
-      <a href="https://t.me/sayfalsex"><img src="https://img.shields.io/badge/Telegram-sayfalsex-26A5E4?style=flat-square&logo=telegram&logoColor=white" /></a><br />
-      <a href="mailto:nahidurrahmanx@gmail.com"><img src="https://img.shields.io/badge/Email-nahidurrahmanx@gmail.com-D14836?style=flat-square&logo=gmail&logoColor=white" /></a>
+        <img src="https://github.com/sayfalse.png" width="120px;" style="border-radius:50%;" alt="sayfalse" />
+      </a>
+      <br />
+      <a href="https://github.com/sayfalse"><strong>sayfalse</strong></a>
+      <br />
+      <sub>Co-Founder &amp; Lead Developer</sub>
+      <br /><br />
+      <a href="https://github.com/sayfalse" title="Code">💻</a>
+      <a href="https://github.com/naimurnstu/x/commits?author=sayfalse" title="Bug Fixes">🐛</a>
+      <a href="#" title="Security">🔒</a>
+      <a href="#" title="Documentation">📖</a>
+      <a href="#" title="Infrastructure">🚇</a>
+      <br /><br />
+      <a href="https://github.com/sayfalse"><img src="https://img.shields.io/badge/-sayfalse-181717?style=flat&logo=github&logoColor=white" /></a>
+      <a href="https://instagram.com/sudoflame"><img src="https://img.shields.io/badge/-sudoflame-E4405F?style=flat&logo=instagram&logoColor=white" /></a>
+      <a href="https://t.me/sayfalsex"><img src="https://img.shields.io/badge/-sayfalsex-26A5E4?style=flat&logo=telegram&logoColor=white" /></a>
+      <a href="mailto:nahidurrahmanx@gmail.com"><img src="https://img.shields.io/badge/-Email-D14836?style=flat&logo=gmail&logoColor=white" /></a>
     </td>
   </tr>
 </table>
 
-## Community
+> **Legend:** 💻 Code · 🐛 Bug Fixes · 🔒 Security · 📖 Docs · 🚇 Infrastructure
+
+---
+
+## Community &amp; Support
 
 <p>
-  <a href="https://t.me/copyrightnews">
-    <img src="https://img.shields.io/badge/Join_our_Telegram_Channel-@copyrightnews-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram Channel" />
-  </a>
+  <a href="https://t.me/copyrightnews"><img src="https://img.shields.io/badge/Telegram-@copyrightnews-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram" /></a>
+  &nbsp;
+  <a href="https://github.com/naimurnstu/x/issues"><img src="https://img.shields.io/badge/Issues-Report_a_Bug-red?style=for-the-badge&logo=github&logoColor=white" alt="Issues" /></a>
+  &nbsp;
+  <a href="https://github.com/naimurnstu/x/discussions"><img src="https://img.shields.io/badge/Discussions-Ask_a_Question-blueviolet?style=for-the-badge&logo=github&logoColor=white" alt="Discussions" /></a>
 </p>
-
-Stay updated with new releases, announcements, and tips on our official Telegram channel: **[t.me/copyrightnews](https://t.me/copyrightnews)**
 
 ## Contributing
 
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+We welcome contributions from the community! See the full guide: **[CONTRIBUTING.md](CONTRIBUTING.md)**
 
-1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
-4. **Push** to the branch (`git push origin feature/amazing-feature`)
-5. **Open** a Pull Request
+```bash
+# Quick start for contributors
+git clone https://github.com/naimurnstu/x.git && cd x
+git checkout -b feature/your-feature
+# make changes...
+git commit -m "feat: your amazing feature"
+git push origin feature/your-feature
+# → Open a Pull Request on GitHub
+```
 
-Please follow the [Code of Conduct](CODE_OF_CONDUCT.md) in all interactions.
+Please follow the **[Code of Conduct](CODE_OF_CONDUCT.md)** in all interactions.
 
 ## License
 
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+Distributed under the **MIT License**. See [`LICENSE`](LICENSE) for details.
 
-Copyright © 2026 [ebnycuhie](https://github.com/ebnycuhie) & [sayfalse](https://github.com/sayfalse)
+```
+MIT License — Copyright © 2026 ebnycuhie & sayfalse
+```
 
 ---
 
 <p align="center">
-  Made with ❤️ by
-  <a href="https://github.com/ebnycuhie">ebnycuhie</a> &amp;
-  <a href="https://github.com/sayfalse">sayfalse</a>
-  &nbsp;|&nbsp;
-  <a href="https://t.me/copyrightnews">📢 @copyrightnews</a>
+  <sub>Built with ❤️ and mass amount of ☕ by <a href="https://github.com/ebnycuhie">ebnycuhie</a> &amp; <a href="https://github.com/sayfalse">sayfalse</a></sub>
+  <br />
+  <sub>
+    <a href="https://github.com/naimurnstu/x/stargazers">⭐ Star this repo</a> · 
+    <a href="https://github.com/naimurnstu/x/issues">🐛 Report Bug</a> · 
+    <a href="https://github.com/naimurnstu/x/issues">💡 Request Feature</a> · 
+    <a href="https://t.me/copyrightnews">📢 @copyrightnews</a>
+  </sub>
 </p>
