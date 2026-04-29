@@ -378,27 +378,14 @@ def render_menu(uid: int, username: str, name: str) -> str:
         f"👤 ID: `{uid}`\n"
         f"🤍 Free account\n"
         f"✅ Downloaded Media: *{total_sent(uid)}*\n\n"
-        "📩 *Cuhi Bot* — One of the best forwarders from RSS and social networks "
-        "(TikTok, Instagram, YouTube, Twitter, Reddit, Facebook, Telegram, VK) to Telegram.\n\n"
-        "*Features:*\n"
-        "🔀 Private or channel/group modes\n"
-        "🔖 Photos, videos and files delivery\n"
-        "🚀 Direct Telegram connection\n"
-        "🤩 Custom Emojis\n"
-        "⚡️ Fast refresh rate\n"
-        "✂️ Filters, replacements, message templates, text splitting, etc..\n"
-        "🎙 Live streams and premieres processing for videos\n"
-        "🕵️‍♂️ Moderation and butler modes\n"
-        "♻️ Similarity filter\n"
-        "🗂 Temporal channel for filtered messages\n"
-        "©️ Images watermarks\n"
-        "🆘 Technical support\n"
-        "👥 Referral program\n\n"
-        "*How to Use:*\n"
-        "— Add a data source (RSS, Instagram, TikTok, etc.)\n"
-        "— Configure message template and filters\n"
-        "— Bot will forward & download new posts automatically!"
-        f"{ch_line}"
+        "📩 *Cuhi Bot* — downloader & forwarder for "
+        "Instagram, TikTok, Facebook, and X.\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f" 🗂 Sources : *{total_profiles(uid)}*\n"
+        f" 🍪 Cookies : *{cookie_summary(uid)}*"
+        f"{ch_line}{disk_line}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "👨‍💻 Developer: @copyrightpost"
     )
 
 
@@ -406,14 +393,14 @@ async def send_menu(msg, uid: int, username: str, name: str, *, edit=False) -> N
     text = render_menu(uid, username, name)
     try:
         if edit:
-            await msg.edit_text(text, reply_markup=kb_main(), parse_mode="Markdown")
+            try:
+                await msg.edit_text(text, reply_markup=kb_main(), parse_mode="Markdown")
+            except BadRequest as e:
+                # If edit fails, try replying instead
+                if "message is not modified" not in str(e).lower():
+                    await msg.reply_text(text, reply_markup=kb_main(), parse_mode="Markdown")
         else:
             await msg.reply_text(text, reply_markup=kb_main(), parse_mode="Markdown")
-    except BadRequest:
-        try:
-            await msg.reply_text(text, reply_markup=kb_main(), parse_mode="Markdown")
-        except Exception:
-            pass
     except Exception:
         pass
 
