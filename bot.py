@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
+
 """
 Cuhi Bot — Media Downloader
 - No ConversationHandler (fixes all back button issues)
 - Instant stop via asyncio.Event + proc.kill()
 - Per-user isolated data
-- Real-time grouped delivery (albums sent as they arrive)
-- Smart archive cleanup (mirrors download.sh logic)
-- Global cookies loaded from Railway env vars at startup
+- Albums, real-time, stories, highlights
+- FIX: Files deleted from disk immediately after sending (prevents OSError Errno 28)
+- FIX: Download dirs wiped after each profile run
+- FIX: /cleanup command to manually free disk space
 """
 
-import asyncio, json, os
+import asyncio, json, os, shutil
 from datetime import datetime
-from telegram.error import RetryAfter
 from pathlib import Path
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
@@ -24,24 +25,16 @@ from telegram.ext import (
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 
-TOKEN        = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
+TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
+
 DATA_ROOT    = Path("./data")
 COOKIES_ROOT = Path("./cookies")
 
-GLOBAL_COOKIES_DIR = COOKIES_ROOT / "global"
-
 PLATFORMS = {
-    "instagram": ("instagram_profiles.txt", "instagram.com_cookies.txt", 1),
-    "tiktok":    ("tiktok_profiles.txt",    "tiktok.com_cookies.txt",    1),
-    "facebook":  ("facebook_profiles.txt",  "facebook.com_cookies.txt",  1),
-    "x":         ("x_profiles.txt",         "x.com_cookies.txt",         1),
-}
-
-COOKIE_ENV_VARS = {
-    "instagram": "COOKIE_INSTAGRAM",
-    "tiktok":    "COOKIE_TIKTOK",
-    "facebook":  "COOKIE_FACEBOOK",
-    "x":         "COOKIE_X",
+    "instagram": ("instagram_profiles.txt",  "instagram.com_cookies.txt",  3),
+    "tiktok":    ("tiktok_profiles.txt",      "tiktok.com_cookies.txt",     2),
+    "facebook":  ("facebook_profiles.txt",    "facebook.com_cookies.txt",   3),
+    "x":         ("x_profiles.txt",           "x.com_cookies.txt",          3),
 }
 
 PLATFORM_URLS = {
@@ -54,44 +47,8 @@ PLATFORM_URLS = {
 PHOTO_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 VIDEO_EXT = {".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v"}
 
-# Telegram album max size
-ALBUM_MAX = 10
-
 # Global per-user stop events
 STOP_EVENTS: dict[int, asyncio.Event] = {}
-
-# ── TELEGRAM FLOOD-CONTROL WRAPPER ───────────────────────────────────────────
-
-async def safe_api(fn, *args, **kwargs):
-    """
-    Retries on flood control (RetryAfter). Swallows all other exceptions
-    so a single failed send never crashes the whole download task.
-    """
-    while True:
-        try:
-            return await fn(*args, **kwargs)
-        except RetryAfter as e:
-            await asyncio.sleep(e.retry_after + 1)
-        except Exception:
-            return None
-
-# ── COOKIE BOOTSTRAP FROM ENV ─────────────────────────────────────────────────
-
-def load_cookies_from_env():
-    GLOBAL_COOKIES_DIR.mkdir(parents=True, exist_ok=True)
-    loaded = []
-    for platform, env_var in COOKIE_ENV_VARS.items():
-        content = os.environ.get(env_var, "").strip()
-        if not content:
-            continue
-        cookie_filename = PLATFORMS[platform][1]
-        dest = GLOBAL_COOKIES_DIR / cookie_filename
-        dest.write_text(content)
-        loaded.append(platform)
-    if loaded:
-        print(f"[cookies] Loaded from env vars: {', '.join(loaded)}")
-    else:
-        print("[cookies] No cookie env vars found — users must upload cookies manually.")
 
 # ── PER-USER PATHS ────────────────────────────────────────────────────────────
 
@@ -110,11 +67,22 @@ def history_file(uid):
 def settings_file(uid):
     return user_dir(uid) / "settings.json"
 
-def get_cookie_path(uid, cfile: str) -> Path:
-    user_cookie = cookie_dir(uid) / cfile
-    if user_cookie.exists():
-        return user_cookie
-    return GLOBAL_COOKIES_DIR / cfile
+# ── DISK USAGE HELPER ─────────────────────────────────────────────────────────
+
+def dir_size_mb(path: Path) -> float:
+    """Return directory size in MB (0.0 if not exists)."""
+    if not path.exists():
+        return 0.0
+    total = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    return round(total / (1024 * 1024), 2)
+
+def cleanup_downloads(uid: int) -> float:
+    """Delete all downloaded media for a user. Returns freed MB."""
+    dl = DATA_ROOT / str(uid) / "downloads"
+    freed = dir_size_mb(dl)
+    if dl.exists():
+        shutil.rmtree(dl, ignore_errors=True)
+    return freed
 
 # ── DATA HELPERS ──────────────────────────────────────────────────────────────
 
@@ -153,56 +121,13 @@ def source_count(uid):
     return str(sum(len(load_profiles(uid, p)) for p in PLATFORMS))
 
 def cookie_status(uid):
-    ok = []
-    for p in PLATFORMS:
-        cfile = PLATFORMS[p][1]
-        user_ck   = cookie_dir(uid) / cfile
-        global_ck = GLOBAL_COOKIES_DIR / cfile
-        if user_ck.exists():
-            ok.append(f"{p}(own)")
-        elif global_ck.exists():
-            ok.append(f"{p}(global)")
+    ok = [p for p in PLATFORMS if (cookie_dir(uid) / PLATFORMS[p][1]).exists()]
     return ", ".join(ok) if ok else "none"
 
 def total_sent(uid):
     return sum(e.get("sent", 0) for e in load_history(uid))
 
-# ── ARCHIVE CLEANUP (mirrors download.sh logic) ───────────────────────────────
-
-def check_and_clean_archive(folder: Path):
-    """
-    Mirrors the check_and_clean_archive logic from download.sh:
-      - folder has 0 media files  → delete archive (so gallery-dl re-downloads)
-      - files on disk < archive entries → stale archive, delete it
-      - otherwise → archive valid, leave it alone
-    Called before each gallery-dl run so re-runs after manual file deletion work correctly.
-    """
-    archive = folder / "archive.txt"
-    media_exts = PHOTO_EXT | VIDEO_EXT
-
-    if not folder.exists():
-        return
-
-    file_count = sum(
-        1 for f in folder.iterdir()
-        if f.is_file() and f.name != "archive.txt" and f.suffix.lower() in media_exts
-    )
-
-    arch_count = 0
-    if archive.exists():
-        try:
-            arch_count = sum(1 for line in archive.read_text().splitlines() if line.strip())
-        except Exception:
-            arch_count = 0
-
-    if file_count == 0:
-        if archive.exists():
-            archive.unlink()
-    elif file_count < arch_count:
-        archive.unlink()
-    # else: archive valid, do nothing
-
-# ── USER STATE ────────────────────────────────────────────────────────────────
+# ── USER STATE (replaces ConversationHandler) ─────────────────────────────────
 
 STATE_MAIN          = "main"
 STATE_ADD_URL       = "add_url"
@@ -218,6 +143,8 @@ def set_state(ctx, s): ctx.user_data["state"] = s
 def menu_text(uid, username, name):
     ch = get_channel(uid)
     ch_line = f"\n📡 Output: *{ch}*" if ch else ""
+    dl_mb = dir_size_mb(DATA_ROOT / str(uid) / "downloads")
+    disk_line = f"\n💾 Cached: *{dl_mb} MB*" if dl_mb > 0 else ""
     return (
         f"@{username}, {name}\n"
         f"🪪 ID: `{uid}`\n"
@@ -246,7 +173,8 @@ def menu_text(uid, username, name):
         "━━━━━━━━━━━━━━━━━━━━\n"
         f" 🗂 Sources : *{source_count(uid)}*\n"
         f" 🍪 Cookies : *{cookie_status(uid)}*"
-        f"{ch_line}\n"
+        f"{ch_line}"
+        f"{disk_line}\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "👨‍💻 Developer: @copyrightpost"
     )
@@ -255,17 +183,18 @@ def menu_text(uid, username, name):
 
 def main_menu_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Add source",     callback_data="m_add"),
-         InlineKeyboardButton("🚫 Remove source",  callback_data="m_remove")],
-        [InlineKeyboardButton("🌐 My sources",     callback_data="m_list"),
-         InlineKeyboardButton("✅ Run download",   callback_data="m_run")],
-        [InlineKeyboardButton("📖 Stories",        callback_data="m_stories"),
-         InlineKeyboardButton("✨ Highlights",     callback_data="m_highlights")],
-        [InlineKeyboardButton("🚫 Stop download",  callback_data="m_stop"),
-         InlineKeyboardButton("📜 History",        callback_data="m_history")],
-        [InlineKeyboardButton("🍪 Set cookies",    callback_data="m_cookies"),
-         InlineKeyboardButton("📊 Status",         callback_data="m_status")],
-        [InlineKeyboardButton("📡 Set channel",    callback_data="m_channel")],
+        [InlineKeyboardButton("➕ Add source",      callback_data="m_add"),
+         InlineKeyboardButton("🚫 Remove source",   callback_data="m_remove")],
+        [InlineKeyboardButton("🌐 My sources",      callback_data="m_list"),
+         InlineKeyboardButton("✅ Run download",     callback_data="m_run")],
+        [InlineKeyboardButton("📖 Stories",         callback_data="m_stories"),
+         InlineKeyboardButton("✨ Highlights",       callback_data="m_highlights")],
+        [InlineKeyboardButton("🚫 Stop download",   callback_data="m_stop"),
+         InlineKeyboardButton("📜 History",         callback_data="m_history")],
+        [InlineKeyboardButton("🍪 Set cookies",     callback_data="m_cookies"),
+         InlineKeyboardButton("📊 Status",          callback_data="m_status")],
+        [InlineKeyboardButton("📡 Set channel",     callback_data="m_channel"),
+         InlineKeyboardButton("🗑️ Free disk",       callback_data="m_cleanup")],
     ])
 
 def back_kb():
@@ -279,7 +208,7 @@ def platform_kb(prefix):
 
 def media_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🖼️ Photos only",       callback_data="dl_1")],
+        [InlineKeyboardButton("🖼️ Photos only",        callback_data="dl_1")],
         [InlineKeyboardButton("🎬 Videos only",        callback_data="dl_2")],
         [InlineKeyboardButton("🔖 Both (separately)",  callback_data="dl_3")],
         [InlineKeyboardButton("📁 Files (as docs)",    callback_data="dl_4")],
@@ -292,13 +221,12 @@ async def show_menu(msg, uid, username, name, edit=False):
     text = menu_text(uid, username, name)
     try:
         if edit:
-            await safe_api(msg.edit_text, text, reply_markup=main_menu_kb(), parse_mode="Markdown")
+            await msg.edit_text(text, reply_markup=main_menu_kb(), parse_mode="Markdown")
         else:
-            await safe_api(msg.reply_text, text, reply_markup=main_menu_kb(), parse_mode="Markdown")
+            await msg.reply_text(text, reply_markup=main_menu_kb(), parse_mode="Markdown")
     except Exception:
         try:
-            await safe_api(
-                msg.reply_text,
+            await msg.reply_text(
                 f"@{username} | ✅ Sent: *{total_sent(uid)}* | 🗂 Sources: *{source_count(uid)}*",
                 reply_markup=main_menu_kb(), parse_mode="Markdown")
         except Exception:
@@ -316,6 +244,18 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await show_menu(update.effective_message, uid,
                     ctx.user_data["username"], ctx.user_data["name"])
 
+# ── /cleanup command ──────────────────────────────────────────────────────────
+
+async def cmd_cleanup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid   = update.effective_user.id
+    uname = ctx.user_data.get("username", update.effective_user.username or "user")
+    name  = ctx.user_data.get("name", update.effective_user.full_name)
+    freed = cleanup_downloads(uid)
+    await update.message.reply_text(
+        f"🗑️ *Disk cleanup complete!*\nFreed: *{freed} MB*",
+        parse_mode="Markdown")
+    await show_menu(update.message, uid, uname, name)
+
 # ── CALLBACK HANDLER ──────────────────────────────────────────────────────────
 
 async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -325,8 +265,10 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid  = user.id
     uname = ctx.user_data.get("username", user.username or "user")
     name  = ctx.user_data.get("name", user.full_name)
+
     await q.answer()
 
+    # ── BACK — always works regardless of state ──
     if data == "m_back":
         set_state(ctx, STATE_MAIN)
         ctx.user_data.pop("add_platform", None)
@@ -334,6 +276,8 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ctx.user_data.pop("highlight_platform", None)
         await show_menu(q.message, uid, uname, name, edit=True)
         return
+
+    # ── MAIN MENU ACTIONS ──
 
     if data == "m_add":
         await q.message.edit_text(
@@ -406,48 +350,27 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "m_cookies":
-        status_lines = []
-        for p in PLATFORMS:
-            cfile = PLATFORMS[p][1]
-            user_ck   = cookie_dir(uid) / cfile
-            global_ck = GLOBAL_COOKIES_DIR / cfile
-            if user_ck.exists():
-                status_lines.append(f"  ✅ `{cfile}` _(your upload)_")
-            elif global_ck.exists():
-                status_lines.append(f"  🌐 `{cfile}` _(global / Railway var)_")
-            else:
-                status_lines.append(f"  ❌ `{cfile}`")
-        status_block = "\n".join(status_lines)
         await q.message.edit_text(
-            "🍪 *Cookie status:*\n"
-            f"{status_block}\n\n"
-            "*To upload your own cookie* (overrides global):\n"
+            "🍪 *Set cookies*\n\n"
             "Send the file named exactly:\n"
             "`instagram.com_cookies.txt`\n"
             "`tiktok.com_cookies.txt`\n"
             "`facebook.com_cookies.txt`\n"
             "`x.com_cookies.txt`\n\n"
-            "Export with *Get cookies.txt LOCALLY* Chrome extension.\n\n"
-            "*To update global cookies*, edit the Railway variable "
-            "(`COOKIE_INSTAGRAM`, `COOKIE_TIKTOK`, `COOKIE_FACEBOOK`, `COOKIE_X`) "
-            "and redeploy.",
+            "Export with *Get cookies.txt LOCALLY* Chrome extension.",
             reply_markup=back_kb(), parse_mode="Markdown")
         return
 
     if data == "m_status":
         lines = ["*📊 Platform status:*"]
         for p in PLATFORMS:
-            n     = len(load_profiles(uid, p))
-            cfile = PLATFORMS[p][1]
-            if (cookie_dir(uid) / cfile).exists():
-                ck = "✅ own"
-            elif (GLOBAL_COOKIES_DIR / cfile).exists():
-                ck = "🌐 global"
-            else:
-                ck = "❌ none"
+            n  = len(load_profiles(uid, p))
+            ck = "✅" if (cookie_dir(uid) / PLATFORMS[p][1]).exists() else "❌"
             lines.append(f"  {p.capitalize():<12} profiles: {n}  cookies: {ck}")
         ch = get_channel(uid)
         lines.append(f"\n📡 Channel: *{ch or 'not set'}*")
+        dl_mb = dir_size_mb(DATA_ROOT / str(uid) / "downloads")
+        lines.append(f"💾 Cached on disk: *{dl_mb} MB*")
         await q.message.edit_text("\n".join(lines), reply_markup=back_kb(), parse_mode="Markdown")
         return
 
@@ -463,6 +386,15 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_kb(), parse_mode="Markdown")
         return
 
+    # ── FREE DISK (inline cleanup button) ──
+    if data == "m_cleanup":
+        freed = cleanup_downloads(uid)
+        await q.message.edit_text(
+            f"🗑️ *Disk cleanup complete!*\nFreed: *{freed} MB*",
+            reply_markup=back_kb(), parse_mode="Markdown")
+        return
+
+    # ── PLATFORM → ADD URL ──
     if data.startswith("add_"):
         platform = data.split("_", 1)[1]
         ctx.user_data["add_platform"] = platform
@@ -473,6 +405,7 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_kb(), parse_mode="Markdown")
         return
 
+    # ── PLATFORM → REMOVE LIST ──
     if data.startswith("rem_"):
         platform = data.split("_", 1)[1]
         urls = load_profiles(uid, platform)
@@ -480,16 +413,17 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await q.message.edit_text(f"No profiles for {platform}.", reply_markup=back_kb())
             return
         rows = [[InlineKeyboardButton(
-            u.rstrip("/").split("/")[-1],
-            callback_data=f"del_{platform}|||{u}")] for u in urls]
+                    u.rstrip("/").split("/")[-1],
+                    callback_data=f"del_{platform}|||{u}")] for u in urls]
         rows.append([InlineKeyboardButton("🔙 Back", callback_data="m_back")])
         await q.message.edit_text(
             f"🗑️ Tap profile to remove from *{platform}*:",
             reply_markup=InlineKeyboardMarkup(rows), parse_mode="Markdown")
         return
 
+    # ── DELETE URL ──
     if data.startswith("del_"):
-        _, rest = data.split("_", 1)
+        _, rest     = data.split("_", 1)
         platform, url = rest.split("|||", 1)
         urls = load_profiles(uid, platform)
         if url in urls:
@@ -497,6 +431,7 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await show_menu(q.message, uid, uname, name, edit=True)
         return
 
+    # ── STORY PLATFORM ──
     if data.startswith("story_"):
         platform = data.split("_", 1)[1]
         ctx.user_data["story_platform"] = platform
@@ -507,6 +442,7 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_kb(), parse_mode="Markdown")
         return
 
+    # ── HIGHLIGHT PLATFORM ──
     if data.startswith("highlight_"):
         platform = data.split("_", 1)[1]
         ctx.user_data["highlight_platform"] = platform
@@ -517,6 +453,7 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_kb(), parse_mode="Markdown")
         return
 
+    # ── DOWNLOAD TYPE ──
     if data.startswith("dl_"):
         choice = data.split("_")[1]
         ev = asyncio.Event()
@@ -598,9 +535,7 @@ async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     tg_file = await doc.get_file()
     await tg_file.download_to_drive(str(cookie_dir(uid) / fname))
-    await update.message.reply_text(
-        f"✅ Cookie saved: `{fname}` _(overrides global cookie for your account)_",
-        parse_mode="Markdown")
+    await update.message.reply_text(f"✅ Cookie saved: `{fname}`", parse_mode="Markdown")
 
 # ── GALLERY-DL CMD ────────────────────────────────────────────────────────────
 
@@ -609,8 +544,8 @@ def build_cmd(out_dir: Path, cookie: Path, sleep: int,
     cmd = ["gallery-dl",
            "-D", str(out_dir),
            "--download-archive", str(out_dir / "archive.txt"),
-           "--sleep-request", str(sleep),
-           "--http-timeout", "30"]
+           "--sleep-request", str(sleep)]
+
     if mode == "photos":
         cmd += ["--filter",
                 "extension in ('jpg','jpeg','png','gif','webp','bmp')"]
@@ -622,7 +557,8 @@ def build_cmd(out_dir: Path, cookie: Path, sleep: int,
             user = url.rstrip("/").split("/")[-1].lstrip("@")
             url  = f"https://www.instagram.com/stories/{user}/"
     elif mode == "highlights":
-        pass
+        pass  # gallery-dl handles via profile URL
+
     if cookie.exists():
         cmd += ["--cookies", str(cookie)]
     cmd.append(url)
@@ -633,93 +569,96 @@ def build_cmd(out_dir: Path, cookie: Path, sleep: int,
 def classify(f: Path) -> str:
     return "photo" if f.suffix.lower() in PHOTO_EXT else "video"
 
+async def _send_group(target, group: list):
+    if hasattr(target, "reply_media_group"):
+        await target.reply_media_group(group)
+    else:
+        bot, cid = target
+        await bot.send_media_group(chat_id=cid, media=group)
+
 async def _send_single(target, f: Path, kind: str):
     try:
         if kind == "photo":
             if hasattr(target, "reply_photo"):
-                await safe_api(target.reply_photo, photo=open(f, "rb"))
+                await target.reply_photo(photo=open(f, "rb"))
             else:
                 bot, cid = target
-                await safe_api(bot.send_photo, chat_id=cid, photo=open(f, "rb"))
+                await bot.send_photo(chat_id=cid, photo=open(f, "rb"))
         elif kind == "video":
             if hasattr(target, "reply_video"):
-                await safe_api(target.reply_video, video=open(f, "rb"))
+                await target.reply_video(video=open(f, "rb"))
             else:
                 bot, cid = target
-                await safe_api(bot.send_video, chat_id=cid, video=open(f, "rb"))
+                await bot.send_video(chat_id=cid, video=open(f, "rb"))
         else:
             if hasattr(target, "reply_document"):
-                await safe_api(target.reply_document, document=open(f, "rb"))
+                await target.reply_document(document=open(f, "rb"))
             else:
                 bot, cid = target
-                await safe_api(bot.send_document, chat_id=cid, document=open(f, "rb"))
+                await bot.send_document(chat_id=cid, document=open(f, "rb"))
     except Exception:
         pass
 
-async def _send_group(target, group: list):
-    if hasattr(target, "reply_media_group"):
-        await safe_api(target.reply_media_group, group)
-    else:
-        bot, cid = target
-        await safe_api(bot.send_media_group, chat_id=cid, media=group)
+async def flush_batch(target, batch: list[Path], send_as: str):
+    """Send a batch (max 10) then DELETE files from disk immediately."""
+    if not batch:
+        return
 
-async def flush_album(target, album: list[Path], send_as: str):
-    """Send a list of files as a Telegram album (media group) if >1, else single."""
-    if not album:
-        return
     if send_as == "documents":
-        for f in album:
+        for f in batch:
             await _send_single(target, f, "doc")
-        return
-    if len(album) == 1:
-        kind = "photo" if send_as == "photos" else \
-               "video" if send_as == "videos" else classify(album[0])
-        await _send_single(target, album[0], kind)
-        return
-    try:
-        group = []
-        for f in album:
+    elif len(batch) == 1:
+        f    = batch[0]
+        kind = ("photo" if send_as == "photos" else
+                "video" if send_as == "videos" else classify(f))
+        await _send_single(target, f, kind)
+    else:
+        try:
             if send_as == "photos":
-                group.append(InputMediaPhoto(open(f, "rb")))
+                group = [InputMediaPhoto(open(f, "rb")) for f in batch]
             elif send_as == "videos":
-                group.append(InputMediaVideo(open(f, "rb")))
+                group = [InputMediaVideo(open(f, "rb")) for f in batch]
             else:
-                if classify(f) == "photo":
-                    group.append(InputMediaPhoto(open(f, "rb")))
-                else:
-                    group.append(InputMediaVideo(open(f, "rb")))
-        await _send_group(target, group)
-    except Exception:
-        # Fallback: send individually if album fails
-        for f in album:
-            kind = "photo" if send_as == "photos" else \
-                   "video" if send_as == "videos" else classify(f)
-            await _send_single(target, f, kind)
+                group = []
+                for f in batch:
+                    if classify(f) == "photo":
+                        group.append(InputMediaPhoto(open(f, "rb")))
+                    else:
+                        group.append(InputMediaVideo(open(f, "rb")))
+            await _send_group(target, group)
+        except Exception:
+            for f in batch:
+                kind = ("photo" if send_as == "photos" else
+                        "video" if send_as == "videos" else classify(f))
+                await _send_single(target, f, kind)
+
+    # ✅ FIX: Delete every file from disk right after sending
+    for f in batch:
+        try:
+            f.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 # ── REALTIME DOWNLOAD ─────────────────────────────────────────────────────────
 
 async def realtime_download(target, out_dir: Path, cookie: Path,
                             sleep: int, url: str, mode: str,
                             stop: asyncio.Event) -> int:
-    """
-    Runs gallery-dl and watches the output folder in real time.
-
-    Grouping strategy:
-      - Files are added to an album as they appear on disk.
-      - Album is flushed (sent) immediately when it hits ALBUM_MAX (10).
-      - Album is also flushed when no new file has appeared for ~1 second,
-        giving real-time grouped delivery without waiting for a full 10.
-
-    Stop strategy:
-      - stop.is_set() is checked every 0.2s loop tick.
-      - proc.kill() is called immediately — halts within one tick (~0.2s).
-      - The stability check no longer uses asyncio.sleep so it never
-        blocks the stop check.
-    """
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    # Archive cleanup before each run (mirrors download.sh logic)
-    check_and_clean_archive(out_dir)
+    # ✅ FIX: Check disk space before creating the directory
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        # Errno 28 = No space left on device
+        err_msg = f"❌ Disk full! Run /cleanup or tap 🗑️ Free disk.\n`{e}`"
+        try:
+            if hasattr(target, "reply_text"):
+                await target.reply_text(err_msg, parse_mode="Markdown")
+            else:
+                bot, cid = target
+                await bot.send_message(chat_id=cid, text=err_msg, parse_mode="Markdown")
+        except Exception:
+            pass
+        return 0
 
     if mode == "photos":
         exts    = PHOTO_EXT
@@ -730,7 +669,7 @@ async def realtime_download(target, out_dir: Path, cookie: Path,
     elif mode == "documents":
         exts    = PHOTO_EXT | VIDEO_EXT
         send_as = "documents"
-    else:
+    else:  # stories / highlights / mixed
         exts    = PHOTO_EXT | VIDEO_EXT
         send_as = "mixed"
 
@@ -740,67 +679,44 @@ async def realtime_download(target, out_dir: Path, cookie: Path,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL)
 
-    seen:  set[Path]  = set()
-    album: list[Path] = []
+    seen: set[Path] = set()
+    buf:  list[Path] = []
     sent = 0
-    last_new_file_time = asyncio.get_event_loop().time()
 
-    async def flush_now():
+    async def do_flush():
         nonlocal sent
-        if not album:
-            return
-        await flush_album(target, list(album), send_as)
-        sent += len(album)
-        album.clear()
+        if not buf: return
+        await flush_batch(target, list(buf), send_as)
+        sent += len(buf)
+        buf.clear()
 
     while True:
-        # ── STOP CHECK — highest priority, checked before and after sleep ──
+        # Check stop FIRST — instant response
         if stop.is_set():
             try: proc.kill()
             except Exception: pass
             break
 
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.5)
 
-        if stop.is_set():
-            try: proc.kill()
-            except Exception: pass
-            break
-
-        now = asyncio.get_event_loop().time()
-
-        # ── SCAN for new stable files ──────────────────────────────────────
         if out_dir.exists():
             for f in sorted(out_dir.iterdir()):
-                if f in seen or not f.is_file():
-                    continue
-                if f.suffix.lower() not in exts:
-                    continue
-                if f.name == "archive.txt":
-                    continue
-                # Stability check: two immediate stat() reads — no sleep needed.
-                # If sizes differ the file is still being written; revisit next tick.
+                if f in seen or not f.is_file(): continue
+                if f.suffix.lower() not in exts:  continue
+                # Skip files still being written
                 try:
-                    s1 = f.stat().st_size
-                    s2 = f.stat().st_size
-                    if s1 == 0 or s1 != s2:
-                        continue
+                    size1 = f.stat().st_size
+                    await asyncio.sleep(0.2)
+                    size2 = f.stat().st_size
+                    if size1 != size2: continue
                 except Exception:
                     continue
+
                 seen.add(f)
-                album.append(f)
-                last_new_file_time = now
-                # Flush immediately if album is full
-                if len(album) >= ALBUM_MAX:
-                    await flush_now()
+                buf.append(f)
+                if len(buf) == 10:
+                    await do_flush()
 
-        # ── TIME-BASED FLUSH: send current album if quiet for ~1s ─────────
-        # This delivers albums in real time even when < ALBUM_MAX files
-        # have arrived — no more waiting for a batch of 10.
-        if album and (now - last_new_file_time) >= 1.0:
-            await flush_now()
-
-        # ── CHECK if process finished ──────────────────────────────────────
         if proc.returncode is not None:
             break
 
@@ -809,19 +725,26 @@ async def realtime_download(target, out_dir: Path, cookie: Path,
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
 
-    # ── FINAL SWEEP — catch any files written in the last moments ──────────
+    # Final sweep (only if not stopped)
     if not stop.is_set() and out_dir.exists():
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.5)
         for f in sorted(out_dir.iterdir()):
             if f in seen or not f.is_file(): continue
             if f.suffix.lower() not in exts:  continue
-            if f.name == "archive.txt":       continue
             seen.add(f)
-            album.append(f)
-            if len(album) >= ALBUM_MAX:
-                await flush_now()
+            buf.append(f)
+            if len(buf) == 10:
+                await do_flush()
 
-    await flush_now()
+    await do_flush()
+
+    # ✅ FIX: Remove the now-empty download directory (keep archive.txt gone too)
+    try:
+        if out_dir.exists():
+            shutil.rmtree(out_dir, ignore_errors=True)
+    except Exception:
+        pass
+
     return sent
 
 # ── DOWNLOAD ORCHESTRATOR ─────────────────────────────────────────────────────
@@ -832,13 +755,14 @@ async def do_download(msg, choice: str, uid: int,
     mode     = mode_map.get(choice, "photos")
     label    = {"photos": "🖼️ Photos", "videos": "🎬 Videos",
                 "both":   "📦 Both",   "documents": "📁 Files"}[mode]
+
     channel     = get_channel(uid)
     send_target = (bot, channel) if channel else msg
 
-    status = await safe_api(
-        msg.reply_text,
+    status = await msg.reply_text(
         f"⏳ *{label}* — starting…" + (f"\n📡 → {channel}" if channel else ""),
         parse_mode="Markdown")
+
     total = 0
     start = datetime.now()
 
@@ -847,23 +771,31 @@ async def do_download(msg, choice: str, uid: int,
         urls = load_profiles(uid, platform)
         if not urls: continue
 
-        cookie = get_cookie_path(uid, cfile)
-
         for url in urls:
             if stop.is_set(): break
             user_handle = url.rstrip("/").split("/")[-1].lstrip("@")
-            await safe_api(
-                status.edit_text,
-                f"⏳ *{platform.capitalize()}* › `{user_handle}`",
-                parse_mode="Markdown")
+
+            try:
+                await status.edit_text(
+                    f"⏳ *{platform.capitalize()}* › `{user_handle}`",
+                    parse_mode="Markdown")
+            except Exception:
+                pass
+
             modes = ["photos", "videos"] if mode == "both" else [mode]
+
             for m in modes:
                 if stop.is_set(): break
+
                 out_dir = (DATA_ROOT / str(uid) / "downloads"
                            / platform.capitalize() / user_handle / m.capitalize())
+
                 n = await realtime_download(
-                    send_target, out_dir, cookie, sleep, url, m, stop)
+                    send_target, out_dir,
+                    cookie_dir(uid) / cfile,
+                    sleep, url, m, stop)
                 total += n
+
                 if n > 0:
                     save_history(uid, {
                         "date":     datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -877,8 +809,10 @@ async def do_download(msg, choice: str, uid: int,
     final   = (f"⏹️ *Stopped.* {total} file(s) in {elapsed}s."
                if stop.is_set() else
                f"✅ *Done!* {total} file(s) in {elapsed}s.")
-    if not await safe_api(status.edit_text, final, parse_mode="Markdown"):
-        await safe_api(msg.reply_text, final, parse_mode="Markdown")
+    try:
+        await status.edit_text(final, parse_mode="Markdown")
+    except Exception:
+        await msg.reply_text(final, parse_mode="Markdown")
 
     STOP_EVENTS.pop(uid, None)
     await show_menu(msg, uid, uname, name)
@@ -892,17 +826,18 @@ async def do_special_download(msg, url: str, platform: str,
     channel     = get_channel(uid)
     send_target = (bot, channel) if channel else msg
     user_handle = url.rstrip("/").split("/")[-1].lstrip("@")
-    status = await safe_api(
-        msg.reply_text,
+
+    status = await msg.reply_text(
         f"⏳ *{label}* › `{user_handle}`…", parse_mode="Markdown")
 
     _, cfile, sleep = PLATFORMS[platform]
-    cookie = get_cookie_path(uid, cfile)
-
     out_dir = (DATA_ROOT / str(uid) / "downloads"
                / platform.capitalize() / user_handle / mode.capitalize())
+
     n = await realtime_download(
-        send_target, out_dir, cookie, sleep, url, mode, stop)
+        send_target, out_dir,
+        cookie_dir(uid) / cfile,
+        sleep, url, mode, stop)
 
     if n > 0:
         save_history(uid, {
@@ -912,8 +847,12 @@ async def do_special_download(msg, url: str, platform: str,
             "media":    mode,
             "sent":     n,
         })
-    await safe_api(status.edit_text,
-                   f"✅ *Done!* {n} file(s) sent.", parse_mode="Markdown")
+
+    try:
+        await status.edit_text(
+            f"✅ *Done!* {n} file(s) sent.", parse_mode="Markdown")
+    except Exception:
+        pass
 
     STOP_EVENTS.pop(uid, None)
     await show_menu(msg, uid, uname, name)
@@ -923,11 +862,12 @@ async def do_special_download(msg, url: str, platform: str,
 def main():
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     COOKIES_ROOT.mkdir(parents=True, exist_ok=True)
-    load_cookies_from_env()
 
     app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("menu",  cmd_start))
+
+    app.add_handler(CommandHandler("start",   cmd_start))
+    app.add_handler(CommandHandler("menu",    cmd_start))
+    app.add_handler(CommandHandler("cleanup", cmd_cleanup))
     app.add_handler(CallbackQueryHandler(cb_router))
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND, handle_text))
