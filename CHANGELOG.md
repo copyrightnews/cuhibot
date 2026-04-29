@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.1] — 2026-04-29
+
+### Summary
+Patch release fixing Instagram video download failures and Telegram upload errors.
+
+### Fixed
+
+| # | Issue | Fix |
+|---|-------|-----|
+| 1 | **`Cannot import yt-dlp`** — gallery-dl could not download Instagram Reels and certain videos, falling back to unreliable alternate URLs | Added `yt-dlp` to `requirements.txt` so gallery-dl can delegate video downloads properly |
+| 2 | **`413 Request Entity Too Large`** — `sendMediaGroup` failed when combined file sizes exceeded Telegram's 50 MB limit, wasting ~75s on retries before fallback | Added pre-flight size check: batches over 50 MB now skip media groups and send files individually from the start |
+| 3 | **Oversized single files** — files larger than 50 MB caused 4 rounds of `TimedOut` retries (75s wasted) before ultimately failing | `_send_one` now skips files exceeding 50 MB immediately with a warning log |
+
+---
+
 ## [1.2.0] — 2026-04-29
 
 ### Summary
