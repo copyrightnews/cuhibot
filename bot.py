@@ -539,7 +539,7 @@ async def send_menu(msg, uid: int, username: str, name: str, *, edit=False) -> N
 @dataclass
 class Status:
     """BUG-06: rate-limited edit_text wrapper that respects RetryAfter."""
-    message: object
+    message: "telegram.Message"
     last_at: float = 0.0
     last_text: str = ""
 
@@ -879,7 +879,7 @@ async def realtime_download(
     downloaded_bytes = 0  # track cumulative file sizes for this run
 
     async def drain() -> None:
-        nonlocal sent_count, downloaded_bytes
+        nonlocal sent_count
         if not buffer:
             return
         batch = list(buffer)
