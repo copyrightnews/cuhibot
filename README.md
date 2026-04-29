@@ -13,6 +13,7 @@
   <a href="#environment-variables">Configuration</a> •
   <a href="#commands">Commands</a> •
   <a href="CHANGELOG.md">Changelog</a> •
+  <a href="#contributors">Contributors</a> •
   <a href="#license">License</a>
 </p>
 
@@ -23,7 +24,13 @@
   <img src="https://img.shields.io/badge/gallery--dl-1.32-orange?style=flat-square" alt="gallery-dl" />
   <img src="https://img.shields.io/badge/deploy-Railway-0B0D0E?style=flat-square&logo=railway&logoColor=white" alt="Railway" />
   <img src="https://img.shields.io/badge/bugs_fixed-31-red?style=flat-square" alt="Bugs Fixed" />
-  <img src="https://img.shields.io/github/license/naimurnstu/x?style=flat-square" alt="License" />
+  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" />
+</p>
+
+<p align="center">
+  <a href="https://t.me/copyrightnews">
+    <img src="https://img.shields.io/badge/Telegram_Channel-@copyrightnews-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram Channel" />
+  </a>
 </p>
 
 ---
@@ -206,9 +213,49 @@ The bot auto-detects and saves cookies for the correct platform.
 ├── bot.py              # Main bot source (single-file architecture)
 ├── Dockerfile          # Production container image
 ├── requirements.txt    # Python dependencies
+├── CHANGELOG.md        # Full history of all bug fixes and releases
 ├── LICENSE             # MIT License
 └── README.md           # This file
 ```
+
+## Contributors
+
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/ebnycuhie">
+        <img src="https://github.com/ebnycuhie.png" width="100px;" alt="ebnycuhie" /><br />
+        <sub><b>ebnycuhie</b></sub>
+      </a><br />
+      🛠️ Developer &amp; Maintainer<br /><br />
+      <a href="https://github.com/ebnycuhie"><img src="https://img.shields.io/badge/GitHub-ebnycuhie-181717?style=flat-square&logo=github" /></a><br />
+      <a href="https://instagram.com/ebnycuhie"><img src="https://img.shields.io/badge/Instagram-ebnycuhie-E4405F?style=flat-square&logo=instagram&logoColor=white" /></a><br />
+      <a href="https://t.me/ebnycuhie"><img src="https://img.shields.io/badge/Telegram-ebnycuhie-26A5E4?style=flat-square&logo=telegram&logoColor=white" /></a><br />
+      <a href="mailto:ebnycuhie@gmail.com"><img src="https://img.shields.io/badge/Email-ebnycuhie@gmail.com-D14836?style=flat-square&logo=gmail&logoColor=white" /></a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/sayfalse">
+        <img src="https://github.com/sayfalse.png" width="100px;" alt="sayfalse" /><br />
+        <sub><b>sayfalse</b></sub>
+      </a><br />
+      🛠️ Developer &amp; Maintainer<br /><br />
+      <a href="https://github.com/sayfalse"><img src="https://img.shields.io/badge/GitHub-sayfalse-181717?style=flat-square&logo=github" /></a><br />
+      <a href="https://instagram.com/sudoflame"><img src="https://img.shields.io/badge/Instagram-sudoflame-E4405F?style=flat-square&logo=instagram&logoColor=white" /></a><br />
+      <a href="https://t.me/sayfalsex"><img src="https://img.shields.io/badge/Telegram-sayfalsex-26A5E4?style=flat-square&logo=telegram&logoColor=white" /></a><br />
+      <a href="mailto:nahidurrahmanx@gmail.com"><img src="https://img.shields.io/badge/Email-nahidurrahmanx@gmail.com-D14836?style=flat-square&logo=gmail&logoColor=white" /></a>
+    </td>
+  </tr>
+</table>
+
+## Community
+
+<p>
+  <a href="https://t.me/copyrightnews">
+    <img src="https://img.shields.io/badge/Join_our_Telegram_Channel-@copyrightnews-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram Channel" />
+  </a>
+</p>
+
+Stay updated with new releases, announcements, and tips on our official Telegram channel: **[t.me/copyrightnews](https://t.me/copyrightnews)**
 
 ## Contributing
 
@@ -224,8 +271,14 @@ Contributions are welcome! Please:
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
 
+Copyright © 2026 [ebnycuhie](https://github.com/ebnycuhie) & [sayfalse](https://github.com/sayfalse)
+
 ---
 
 <p align="center">
-  Made with ❤️ by <a href="https://github.com/naimurnstu">naimurnstu</a>
+  Made with ❤️ by
+  <a href="https://github.com/ebnycuhie">ebnycuhie</a> &amp;
+  <a href="https://github.com/sayfalse">sayfalse</a>
+  &nbsp;|&nbsp;
+  <a href="https://t.me/copyrightnews">📢 @copyrightnews</a>
 </p>
