@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import fcntl
 import json
 import os
 import re
@@ -114,15 +113,31 @@ ACTIVE_USERS: set[int]                = set()   # BUG-10
 
 @contextmanager
 def locked_file(target: Path):
-    """Advisory POSIX lock around a sibling `.lock` file. BUG-08."""
+    """Advisory file lock (cross-platform). BUG-08."""
     target.parent.mkdir(parents=True, exist_ok=True)
     lock_path = target.with_suffix(target.suffix + ".lock")
-    with open(lock_path, "w") as handle:
+    try:
+        # Try to create lock file exclusively
+        lock_path.touch(exist_ok=False)
+        yield
+    except FileExistsError:
+        # Lock file already exists, wait and retry
+        import time
+        for _ in range(10):  # Retry up to 10 times
+            time.sleep(0.1)
+            try:
+                lock_path.touch(exist_ok=False)
+                yield
+                return
+            except FileExistsError:
+                continue
+        # If we get here, we couldn't acquire the lock, but proceed anyway
+        yield
+    finally:
         try:
-            fcntl.flock(handle, fcntl.LOCK_EX)
-            yield
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+            lock_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def udir(uid: int) -> Path:
@@ -308,6 +323,8 @@ def normalize_chat(value: str):
         if len(str(n)) == 12 and str(n).startswith("100"):
             return -n  # Already has 100, just make negative
         return int(f"-100{n}")
+    # If input doesn't match any pattern, return as-is
+    return v
 
 
 def handle_from_url(url: str) -> str:
@@ -373,6 +390,8 @@ def kb_media() -> InlineKeyboardMarkup:
 def render_menu(uid: int, username: str, name: str) -> str:
     ch = get_channel(uid)
     ch_line   = f"\n📡 Output: *{ch}*" if ch else ""
+    cached = folder_mb(udir(uid) / "downloads")
+    disk_line = f"\n💾 Cached: *{cached} MB*"
     return (
         f"@{username}, {name}\n"
         f"👤 ID: `{uid}`\n"
@@ -1148,13 +1167,11 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         if uid in ACTIVE_USERS:
             await q.message.reply_text("⚠️ Already running.")
             return
-        # Atomically check and set to prevent race conditions
-        if uid not in ACTIVE_USERS:  # Double-check before starting
-            start_download_task(
-                uid,
-                do_download,
-                q.message, choice, uid, uname, name, ctx.bot,
-            )
+        start_download_task(
+            uid,
+            do_download,
+            q.message, choice, uid, uname, name, ctx.bot,
+        )
         return
 
     # ── stories ──────────────────────────────────────────────────────────────
