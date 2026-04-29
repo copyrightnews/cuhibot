@@ -10,6 +10,7 @@ Cuhi Bot — Media Downloader
 
 import asyncio, json, os
 from datetime import datetime
+from telegram.error import RetryAfter
 from pathlib import Path
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
@@ -56,6 +57,24 @@ VIDEO_EXT = {".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v"}
 
 # Global per-user stop events
 STOP_EVENTS: dict[int, asyncio.Event] = {}
+
+# ── TELEGRAM FLOOD-CONTROL WRAPPER ───────────────────────────────────────────
+
+async def safe_api(fn, *args, **kwargs):
+    """
+    Call any Telegram API method safely.
+    If Telegram returns RetryAfter (flood control), wait the required
+    number of seconds and retry automatically — forever if needed.
+    Any other exception is silently swallowed so one failed send never
+    crashes the whole download task.
+    """
+    while True:
+        try:
+            return await fn(*args, **kwargs)
+        except RetryAfter as e:
+            await asyncio.sleep(e.retry_after + 1)
+        except Exception:
+            return None
 
 # ── COOKIE BOOTSTRAP FROM ENV ─────────────────────────────────────────────────
 
@@ -253,12 +272,13 @@ async def show_menu(msg, uid, username, name, edit=False):
     text = menu_text(uid, username, name)
     try:
         if edit:
-            await msg.edit_text(text, reply_markup=main_menu_kb(), parse_mode="Markdown")
+            await safe_api(msg.edit_text, text, reply_markup=main_menu_kb(), parse_mode="Markdown")
         else:
-            await msg.reply_text(text, reply_markup=main_menu_kb(), parse_mode="Markdown")
+            await safe_api(msg.reply_text, text, reply_markup=main_menu_kb(), parse_mode="Markdown")
     except Exception:
         try:
-            await msg.reply_text(
+            await safe_api(
+                msg.reply_text,
                 f"@{username} | ✅ Sent: *{total_sent(uid)}* | 🗂 Sources: *{source_count(uid)}*",
                 reply_markup=main_menu_kb(), parse_mode="Markdown")
         except Exception:
@@ -604,31 +624,31 @@ def classify(f: Path) -> str:
 
 async def _send_group(target, group: list):
     if hasattr(target, "reply_media_group"):
-        await target.reply_media_group(group)
+        await safe_api(target.reply_media_group, group)
     else:
         bot, cid = target
-        await bot.send_media_group(chat_id=cid, media=group)
+        await safe_api(bot.send_media_group, chat_id=cid, media=group)
 
 async def _send_single(target, f: Path, kind: str):
     try:
         if kind == "photo":
             if hasattr(target, "reply_photo"):
-                await target.reply_photo(photo=open(f, "rb"))
+                await safe_api(target.reply_photo, photo=open(f, "rb"))
             else:
                 bot, cid = target
-                await bot.send_photo(chat_id=cid, photo=open(f, "rb"))
+                await safe_api(bot.send_photo, chat_id=cid, photo=open(f, "rb"))
         elif kind == "video":
             if hasattr(target, "reply_video"):
-                await target.reply_video(video=open(f, "rb"))
+                await safe_api(target.reply_video, video=open(f, "rb"))
             else:
                 bot, cid = target
-                await bot.send_video(chat_id=cid, video=open(f, "rb"))
+                await safe_api(bot.send_video, chat_id=cid, video=open(f, "rb"))
         else:
             if hasattr(target, "reply_document"):
-                await target.reply_document(document=open(f, "rb"))
+                await safe_api(target.reply_document, document=open(f, "rb"))
             else:
                 bot, cid = target
-                await bot.send_document(chat_id=cid, document=open(f, "rb"))
+                await safe_api(bot.send_document, chat_id=cid, document=open(f, "rb"))
     except Exception:
         pass
 
@@ -755,7 +775,8 @@ async def do_download(msg, choice: str, uid: int,
                 "both":   "📦 Both",   "documents": "📁 Files"}[mode]
     channel     = get_channel(uid)
     send_target = (bot, channel) if channel else msg
-    status = await msg.reply_text(
+    status = await safe_api(
+        msg.reply_text,
         f"⏳ *{label}* — starting…" + (f"\n📡 → {channel}" if channel else ""),
         parse_mode="Markdown")
     total = 0
@@ -772,12 +793,10 @@ async def do_download(msg, choice: str, uid: int,
         for url in urls:
             if stop.is_set(): break
             user_handle = url.rstrip("/").split("/")[-1].lstrip("@")
-            try:
-                await status.edit_text(
-                    f"⏳ *{platform.capitalize()}* › `{user_handle}`",
-                    parse_mode="Markdown")
-            except Exception:
-                pass
+            await safe_api(
+                status.edit_text,
+                f"⏳ *{platform.capitalize()}* › `{user_handle}`",
+                parse_mode="Markdown")
             modes = ["photos", "videos"] if mode == "both" else [mode]
             for m in modes:
                 if stop.is_set(): break
@@ -799,10 +818,8 @@ async def do_download(msg, choice: str, uid: int,
     final   = (f"⏹️ *Stopped.* {total} file(s) in {elapsed}s."
                if stop.is_set() else
                f"✅ *Done!* {total} file(s) in {elapsed}s.")
-    try:
-        await status.edit_text(final, parse_mode="Markdown")
-    except Exception:
-        await msg.reply_text(final, parse_mode="Markdown")
+    if not await safe_api(status.edit_text, final, parse_mode="Markdown"):
+        await safe_api(msg.reply_text, final, parse_mode="Markdown")
 
     STOP_EVENTS.pop(uid, None)
     await show_menu(msg, uid, uname, name)
@@ -816,7 +833,8 @@ async def do_special_download(msg, url: str, platform: str,
     channel     = get_channel(uid)
     send_target = (bot, channel) if channel else msg
     user_handle = url.rstrip("/").split("/")[-1].lstrip("@")
-    status = await msg.reply_text(
+    status = await safe_api(
+        msg.reply_text,
         f"⏳ *{label}* › `{user_handle}`…", parse_mode="Markdown")
 
     _, cfile, sleep = PLATFORMS[platform]
@@ -836,11 +854,8 @@ async def do_special_download(msg, url: str, platform: str,
             "media":    mode,
             "sent":     n,
         })
-    try:
-        await status.edit_text(
-            f"✅ *Done!* {n} file(s) sent.", parse_mode="Markdown")
-    except Exception:
-        pass
+    await safe_api(status.edit_text,
+                   f"✅ *Done!* {n} file(s) sent.", parse_mode="Markdown")
 
     STOP_EVENTS.pop(uid, None)
     await show_menu(msg, uid, uname, name)
