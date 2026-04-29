@@ -38,6 +38,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
+logging.basicConfig(
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    level=logging.INFO,
+)
 logger = logging.getLogger(__name__)
 
 from telegram import (
@@ -239,8 +243,13 @@ def read_profiles(uid: int, platform: str) -> list[str]:
 
 def write_profiles(uid: int, platform: str, urls: Iterable[str]) -> None:
     path = profiles_path(uid, platform)
+    url_list = list(urls)
     with locked_file(path):
-        path.write_text("\n".join(urls) + "\n")
+        if url_list:
+            path.write_text("\n".join(url_list) + "\n")
+        else:
+            # Truncate the file cleanly when all profiles are removed
+            path.write_text("")
 
 
 def read_history(uid: int) -> list[dict]:
@@ -543,12 +552,24 @@ def file_kind(f: Path) -> str:
     return "photo" if f.suffix.lower() in PHOTO_EXT else "video"
 
 
-async def _send_group(target, group: list) -> None:
-    if hasattr(target, "reply_media_group"):
-        await target.reply_media_group(group)
-    else:
-        bot, cid = target
-        await bot.send_media_group(chat_id=cid, media=group)
+async def _send_group(target, group: list, *, _retries: int = 0) -> None:
+    """Send a media group, retrying on TimedOut/RetryAfter."""
+    try:
+        if hasattr(target, "reply_media_group"):
+            await target.reply_media_group(group)
+        else:
+            bot, cid = target
+            await bot.send_media_group(chat_id=cid, media=group)
+    except RetryAfter as exc:
+        if _retries >= 3:
+            raise
+        await asyncio.sleep(exc.retry_after + 1.0)
+        await _send_group(target, group, _retries=_retries + 1)
+    except TimedOut:
+        if _retries >= 4:
+            raise
+        await asyncio.sleep(5.0 * (2 ** _retries))
+        await _send_group(target, group, _retries=_retries + 1)
 
 
 async def _send_one(target, f: Path, kind: str, *, _retries: int = 0) -> bool:
@@ -739,7 +760,7 @@ async def realtime_download(
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,   # capture so we can log errors
     )
 
     seen: set[Path] = set()
@@ -750,9 +771,12 @@ async def realtime_download(
         nonlocal sent_count
         if not buffer:
             return
-        await flush(target, list(buffer), send_as)
-        sent_count += len(buffer)
+        batch = list(buffer)
         buffer.clear()
+        # flush() deletes each file after sending; sent_count is
+        # incremented only for files that actually existed when we flushed
+        await flush(target, batch, send_as)
+        sent_count += len(batch)
 
     try:
         # BUG-02: polling loop with proper subprocess exit detection.
@@ -823,10 +847,15 @@ async def realtime_download(
                 proc.kill()
             except Exception:
                 pass
-            try:
-                await proc.wait()
-            except Exception:
-                pass
+        # Always drain stderr so we can log gallery-dl errors
+        try:
+            _, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=5)
+            if stderr_bytes and stderr_bytes.strip():
+                logger.warning("gallery-dl stderr [%s/%s]: %s",
+                               platform, handle,
+                               stderr_bytes.decode(errors="replace").strip())
+        except Exception:
+            pass
 
     return sent_count
 
@@ -1024,8 +1053,15 @@ async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 
     platform, cookie_name = matched
     dest = cdir(uid) / cookie_name
-    tg_file = await doc.get_file()
-    await tg_file.download_to_drive(str(dest))
+    try:
+        tg_file = await doc.get_file()
+        await tg_file.download_to_drive(str(dest))
+    except Exception:
+        logger.exception("Cookie download failed for uid=%s platform=%s", uid, platform)
+        await update.message.reply_text(
+            "❌ Failed to save the cookie file. Please try again."
+        )
+        return
     await update.message.reply_text(
         f"🍪 Cookies saved for *{platform.capitalize()}*.", parse_mode="Markdown"
     )
