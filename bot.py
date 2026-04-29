@@ -103,6 +103,7 @@ VIDEO_EXT = frozenset({".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v"})
 
 MEDIA_GROUP_MAX = 10       # Telegram limit
 STATUS_MIN_GAP  = 2.0      # seconds (BUG-06)
+TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # 50 MB — Telegram Bot API upload cap
 
 # ── Security constants ───────────────────────────────────────────────────────
 # Comma-separated Telegram user IDs. If empty/unset, ALL users are allowed.
@@ -616,6 +617,15 @@ async def _send_one(target, f: Path, kind: str, *, _retries: int = 0) -> bool:
     Retries up to 4 times on TimedOut (large file upload) and RetryAfter
     (rate limit) with exponential backoff.
     """
+    # Skip files that exceed Telegram's 50 MB upload limit
+    try:
+        fsize = f.stat().st_size
+    except OSError:
+        fsize = 0
+    if fsize > TELEGRAM_FILE_LIMIT:
+        logger.warning("Skipping %s (%.1f MB) — exceeds Telegram 50 MB limit",
+                       f.name, fsize / (1024 * 1024))
+        return False
     try:
         with open(f, "rb") as fh:
             if kind == "photo":
@@ -690,6 +700,21 @@ async def flush(target, batch: list[Path], send_as: str) -> None:
 
         else:
             for chunk in _split_mixed(batch):
+                # Pre-check: skip media group if total size exceeds Telegram's
+                # ~50 MB limit — go straight to individual sends to avoid 413.
+                chunk_bytes = sum(
+                    (f.stat().st_size if f.exists() else 0) for f in chunk
+                )
+                if chunk_bytes > TELEGRAM_FILE_LIMIT:
+                    logger.info(
+                        "Chunk %.1f MB exceeds 50 MB — sending %d files individually",
+                        chunk_bytes / (1024 * 1024), len(chunk),
+                    )
+                    for f in chunk:
+                        kind = {"photos": "photo", "videos": "video"}.get(send_as) or file_kind(f)
+                        await _send_one(target, f, kind)
+                    continue
+
                 file_handles: list = []
                 try:
                     handles = []
