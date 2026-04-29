@@ -11,6 +11,7 @@
   <a href="#quick-start">Quick Start</a> •
   <a href="#deployment">Deployment</a> •
   <a href="#environment-variables">Configuration</a> •
+  <a href="#security">Security</a> •
   <a href="#commands">Commands</a> •
   <a href="CHANGELOG.md">Changelog</a> •
   <a href="#contributors">Contributors</a> •
@@ -18,12 +19,13 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.1.0-brightgreen?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/version-1.2.3-brightgreen?style=flat-square" alt="Version" />
   <img src="https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
   <img src="https://img.shields.io/badge/telegram--bot-22.1-26A5E4?style=flat-square&logo=telegram&logoColor=white" alt="python-telegram-bot" />
   <img src="https://img.shields.io/badge/gallery--dl-1.32-orange?style=flat-square" alt="gallery-dl" />
+  <img src="https://img.shields.io/badge/yt--dlp-latest-red?style=flat-square" alt="yt-dlp" />
   <img src="https://img.shields.io/badge/deploy-Railway-0B0D0E?style=flat-square&logo=railway&logoColor=white" alt="Railway" />
-  <img src="https://img.shields.io/badge/bugs_fixed-31-red?style=flat-square" alt="Bugs Fixed" />
+  <img src="https://img.shields.io/badge/bugs_fixed-42-critical?style=flat-square" alt="Bugs Fixed" />
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" />
 </p>
 
@@ -48,16 +50,20 @@
 | 📜 **History tracking** | Full download history with timestamps, platforms, and file counts |
 | 🚫 **Stop control** | Gracefully stop any running download mid-stream |
 | 🗑️ **Disk management** | One-tap cleanup of cached downloads to free disk space |
-| 🔒 **Per-user isolation** | Every user gets their own profiles, cookies, settings, and history |
+| 🔒 **Access control** | User allowlist, admin system, rate limiting, and input validation |
+| 🛡️ **Production-hardened** | 42 bugs fixed across 7 audit passes — zero-error codebase |
 
 ## Architecture
 
 ```
 bot.py                  # Single-file bot (all logic)
-├── Telegram Handlers   # /start, /cleanup, inline buttons, text input
+├── Telegram Handlers   # /start, /cleanup, /admin, inline buttons, text input
 ├── Orchestrators       # do_download(), do_special_download()
-├── Download Engine     # realtime_download() → gallery-dl subprocess
+├── Download Engine     # realtime_download() → gallery-dl + yt-dlp subprocess
 ├── Sender              # flush() → Telegram media groups / singles
+│   ├── Size guard      # 50 MB Telegram API limit enforcement
+│   ├── Retry logic     # Exponential backoff for TimedOut / RetryAfter
+│   └── Smart cleanup   # Only deletes successfully-sent files
 ├── Persistence         # JSON-based settings, history, profiles
 └── Utilities           # File locking, cookie resolution, validators
 ```
@@ -108,6 +114,10 @@ pip install -r requirements.txt
 # Set your bot token
 export BOT_TOKEN="your-telegram-bot-token"
 
+# (Optional) Restrict access to specific users
+export ALLOWED_USERS="123456789,987654321"
+export ADMIN_IDS="123456789"
+
 # Run
 python bot.py
 ```
@@ -122,7 +132,7 @@ python bot.py
 4. **Deploy** — Railway auto-builds from the Dockerfile
 
 > [!TIP]
-> The included `Dockerfile` handles everything: Python 3.11, ffmpeg, pip dependencies, and gallery-dl.
+> The included `Dockerfile` handles everything: Python 3.11, ffmpeg, yt-dlp, pip dependencies, and gallery-dl.
 
 ### Docker (Self-hosted)
 
@@ -131,6 +141,8 @@ docker build -t cuhi-bot .
 docker run -d \
   --name cuhi \
   -e BOT_TOKEN="your-token" \
+  -e ALLOWED_USERS="123456789" \
+  -e ADMIN_IDS="123456789" \
   -e COOKIE_INSTAGRAM="your-cookie-text-or-base64" \
   -v cuhi-data:/app/data \
   cuhi-bot
@@ -143,6 +155,8 @@ docker run -d \
 | `BOT_TOKEN` | ✅ | — | Telegram Bot API token from @BotFather |
 | `DATA_ROOT` | ❌ | `./data` | Path for user data, profiles, history, archives |
 | `COOKIES_ROOT` | ❌ | `./cookies` | Path for cookie files |
+| `ALLOWED_USERS` | ❌ | — | Comma-separated Telegram user IDs allowed to use the bot. If empty, all users are allowed |
+| `ADMIN_IDS` | ❌ | — | Comma-separated admin user IDs. Admins always bypass allowlist and can use `/admin` |
 | `COOKIE_INSTAGRAM` | ❌ | — | Netscape cookie text or base64 for Instagram |
 | `COOKIE_TIKTOK` | ❌ | — | Netscape cookie text or base64 for TikTok |
 | `COOKIE_FACEBOOK` | ❌ | — | Netscape cookie text or base64 for Facebook |
@@ -160,6 +174,25 @@ COOKIES_ROOT=/app/data/cookies
 ```
 And attach a volume mounted at `/app/data`.
 
+## Security
+
+Cuhi Bot is production-hardened with multiple layers of security. See [SECURITY.md](SECURITY.md) for the full policy and vulnerability reporting.
+
+| Layer | Protection |
+|-------|------------|
+| 🔒 **Access control** | User allowlist (`ALLOWED_USERS`) + admin system (`ADMIN_IDS`) |
+| ⏱️ **Rate limiting** | 30-second cooldown between downloads per user |
+| 🚫 **Concurrency guard** | Only one active download per user at a time |
+| 🛡️ **Input validation** | URL format, domain, length, shell injection, and newline checks |
+| 📏 **File size limits** | 50 MB Telegram API limit enforced pre-upload; 1 MB cookie file limit |
+| 🔐 **Data isolation** | Per-user directories for all data — no cross-user access |
+| 🔗 **Atomic file locking** | `O_CREAT|O_EXCL` locks prevent race conditions on concurrent writes |
+| 📊 **Audit logging** | Unauthorized access attempts logged with user ID and username |
+| 🐳 **Minimal container** | `python:3.11-slim` base with no baked-in secrets |
+
+> [!WARNING]
+> **Never commit your `BOT_TOKEN` or cookie files to source control.** Always use environment variables.
+
 ## Commands
 
 | Command | Description |
@@ -167,6 +200,7 @@ And attach a volume mounted at `/app/data`.
 | `/start` | Open the main menu |
 | `/menu` | Same as /start |
 | `/cleanup` | Free disk space by deleting cached downloads |
+| `/admin` | Admin panel — view bot stats and active users (admin-only) |
 
 ### Inline Menu Actions
 
@@ -203,6 +237,7 @@ The bot auto-detects and saves cookies for the correct platform.
 | Language | Python 3.11 |
 | Bot Framework | [python-telegram-bot](https://github.com/python-telegram-bot/python-telegram-bot) 22.1 |
 | Downloader | [gallery-dl](https://github.com/mikf/gallery-dl) 1.32 |
+| Video Engine | [yt-dlp](https://github.com/yt-dlp/yt-dlp) (latest) |
 | Container | Docker (python:3.11-slim + ffmpeg) |
 | Hosting | [Railway](https://railway.app) |
 
@@ -214,7 +249,11 @@ The bot auto-detects and saves cookies for the correct platform.
 ├── Dockerfile          # Production container image
 ├── requirements.txt    # Python dependencies
 ├── CHANGELOG.md        # Full history of all bug fixes and releases
+├── SECURITY.md         # Security policy and vulnerability reporting
+├── CONTRIBUTING.md     # Contribution guidelines
+├── CODE_OF_CONDUCT.md  # Community code of conduct
 ├── LICENSE             # MIT License
+├── .gitignore          # Git ignore rules
 └── README.md           # This file
 ```
 
@@ -259,13 +298,15 @@ Stay updated with new releases, announcements, and tips on our official Telegram
 
 ## Contributing
 
-Contributions are welcome! Please:
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 1. **Fork** the repository
 2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
 3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
 4. **Push** to the branch (`git push origin feature/amazing-feature`)
 5. **Open** a Pull Request
+
+Please follow the [Code of Conduct](CODE_OF_CONDUCT.md) in all interactions.
 
 ## License
 

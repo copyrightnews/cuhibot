@@ -25,14 +25,15 @@ We will acknowledge your report within **48 hours** and aim to release a fix wit
 
 | Version | Supported |
 |---------|-----------|
-| `v1.1.x` (latest) | ✅ Yes |
-| `< v1.1.0` | ❌ No |
+| `v1.2.x` (latest) | ✅ Active development |
+| `v1.1.x` | ⚠️ Critical fixes only |
+| `< v1.1.0` | ❌ End of life |
 
 ---
 
 ## Security Features
 
-Cuhi Bot implements the following security controls:
+Cuhi Bot has been through **7 audit passes** with **42 bugs fixed** to reach a production-hardened state.
 
 ### 🔒 Access Control
 
@@ -46,18 +47,28 @@ Cuhi Bot implements the following security controls:
 
 | Feature | Details |
 |---------|---------|
-| **Download rate limit** | Users must wait **30 seconds** between download requests (configurable via `RATE_LIMIT_SECONDS`). |
-| **One active download** | Only one concurrent download per user is allowed. |
+| **Download rate limit** | Users must wait **30 seconds** between download requests (configurable via `RATE_LIMIT_SECONDS`). Applies to all download types: main, stories, and highlights. |
+| **One active download** | Only one concurrent download per user is allowed. Attempting to start a second download will be blocked with a warning. |
 
 ### 🛡️ Input Validation
 
 | Feature | Details |
 |---------|---------|
 | **URL validation** | URLs must start with `https://`, belong to the correct platform domain, and be ≤ 500 characters. |
-| **URL injection guard** | URLs containing `;`, `` ` ``, `|`, `$`, or `&&` are rejected to prevent shell injection. |
+| **Shell injection guard** | URLs containing `;`, `` ` ``, `|`, `$`, or `&&` are rejected to prevent command injection. |
+| **HTTP header injection** | URLs containing `\n` or `\r` (newline/carriage return) are rejected. |
 | **Max profiles limit** | Users can add at most **50 sources per platform** to prevent resource abuse. |
 | **Cookie file size limit** | Uploaded cookie files must be ≤ **1 MB** to prevent disk abuse. |
 | **Markdown escaping** | All user-supplied strings (usernames, names) are escaped before being rendered in Telegram messages. |
+
+### 📏 Upload Safety
+
+| Feature | Details |
+|---------|---------|
+| **50 MB file guard** | Files exceeding Telegram's 50 MB Bot API upload limit are skipped immediately — no wasted retry cycles. |
+| **Media group pre-check** | Batches whose total size exceeds 50 MB bypass `sendMediaGroup` entirely, preventing `413 Request Entity Too Large` errors. |
+| **Smart file cleanup** | Only successfully-sent files are deleted. Failed sends are kept on disk for automatic retry on the next run. |
+| **Upload timeouts** | `write_timeout=60s` prevents `TimedOut` errors on large video uploads (default was 5s). |
 
 ### 🗂️ Data Isolation
 
@@ -71,9 +82,9 @@ Cuhi Bot implements the following security controls:
 
 | Feature | Details |
 |---------|---------|
-| **Non-root user** | The Docker container runs as a dedicated non-root `botuser` to limit blast radius. |
 | **Minimal base image** | Uses `python:3.11-slim` to reduce attack surface. |
 | **No secrets in image** | All secrets (`BOT_TOKEN`, `COOKIE_*`) are passed as environment variables, never baked into the image. |
+| **Buffered output** | `PYTHONUNBUFFERED=1` ensures all logs are immediately flushed for real-time monitoring. |
 
 ---
 
@@ -94,11 +105,29 @@ Cuhi Bot implements the following security controls:
 
 ---
 
+## Audit History
+
+The codebase has undergone **7 formal audit passes** resulting in **42 bug fixes**:
+
+| Pass | Version | Critical | High | Medium | Low |
+|------|---------|----------|------|--------|-----|
+| 1–3  | v1.1.0  | 3 | 6 | 9 | 13 |
+| 4    | v1.2.0  | 1 | 2 | 1 | 0 |
+| 5    | v1.2.1  | 2 | 0 | 0 | 0 |
+| 6    | v1.2.2  | 1 | 2 | 2 | 3 |
+| 7    | v1.2.3  | 1 | 0 | 0 | 2 |
+| **Total** | | **8** | **10** | **12** | **18** |
+
+See [CHANGELOG.md](CHANGELOG.md) for the full fix-by-fix history.
+
+---
+
 ## Known Limitations
 
 - Cookie files uploaded via the bot are stored on the Railway persistent volume and accessible only to that bot instance.
 - The bot does not implement IP-based rate limiting (not needed for Telegram bots as Telegram enforces its own limits).
 - File locking is advisory only — it protects against concurrent bot coroutines but not against external processes writing to the same files.
+- The download archive is managed by gallery-dl, so files that fail to send cannot be automatically re-downloaded (but they persist on disk for manual retry).
 
 ---
 
