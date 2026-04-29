@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.0] — 2026-04-29
+
+### Summary
+Security hardening release. Added multi-layer access controls, rate limiting, and input
+validation to prevent resource abuse. Added a formal `SECURITY.md` vulnerability reporting policy.
+
+### Added
+
+| # | Feature | Details |
+|---|---------|---------|
+| 1 | **`ALLOWED_USERS` allowlist** | Set a comma-separated list of Telegram user IDs; all others are silently rejected at every handler |
+| 2 | **Per-user download rate limit** | Max 3 download requests per 60-second window per user; excess requests receive a clear cooldown message |
+| 3 | **Max 50 profiles per platform** | Prevents unlimited source accumulation that would exhaust memory and disk |
+| 4 | **1 MB cookie file size limit** | Rejects oversized cookie uploads before they are written to disk |
+| 5 | **500-character URL length cap** | Blocks abnormally long URLs that could cause regex or parser issues |
+| 6 | **`SECURITY.md`** | Professional vulnerability reporting policy with maintainer contacts and env-var security guide |
+
+---
+
 ## [1.1.0] — 2026-04-29
 
 ### Summary
