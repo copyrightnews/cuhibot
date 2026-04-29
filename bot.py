@@ -300,9 +300,14 @@ def normalize_chat(value: str):
         return v
     if v.lstrip("-").isdigit():
         n = int(v)
-        # Channels / supergroups are -100 prefixed when numeric
-        return n if n < 0 else int(f"-100{n}")
-    return v  # let Telegram reject if it's garbage
+        # Already negative: keep as-is
+        if n < 0:
+            return n
+        # Positive number: add -100 prefix for supergroups/channels
+        # unless it already looks like a 100-prefixed ID (100XXXXXXXXX = 12 digits)
+        if len(str(n)) == 12 and str(n).startswith("100"):
+            return -n  # Already has 100, just make negative
+        return int(f"-100{n}")
 
 
 def handle_from_url(url: str) -> str:
@@ -368,21 +373,32 @@ def kb_media() -> InlineKeyboardMarkup:
 def render_menu(uid: int, username: str, name: str) -> str:
     ch = get_channel(uid)
     ch_line   = f"\n📡 Output: *{ch}*" if ch else ""
-    cached    = folder_mb(udir(uid) / "downloads")
-    disk_line = f"\n💾 Cached: *{cached} MB*" if cached > 0 else ""
     return (
         f"@{username}, {name}\n"
-        f"🪪 ID: `{uid}`\n"
-        f"🆓 Free account\n"
+        f"👤 ID: `{uid}`\n"
+        f"🤍 Free account\n"
         f"✅ Downloaded Media: *{total_sent(uid)}*\n\n"
-        "📩 *Cuhi Bot* — downloader & forwarder for "
-        "Instagram, TikTok, Facebook, and X.\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f" 🗂 Sources : *{total_profiles(uid)}*\n"
-        f" 🍪 Cookies : *{cookie_summary(uid)}*"
-        f"{ch_line}{disk_line}\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "👨‍💻 Developer: @copyrightpost"
+        "📩 *Cuhi Bot* — One of the best forwarders from RSS and social networks "
+        "(TikTok, Instagram, YouTube, Twitter, Reddit, Facebook, Telegram, VK) to Telegram.\n\n"
+        "*Features:*\n"
+        "🔀 Private or channel/group modes\n"
+        "🔖 Photos, videos and files delivery\n"
+        "🚀 Direct Telegram connection\n"
+        "🤩 Custom Emojis\n"
+        "⚡️ Fast refresh rate\n"
+        "✂️ Filters, replacements, message templates, text splitting, etc..\n"
+        "🎙 Live streams and premieres processing for videos\n"
+        "🕵️‍♂️ Moderation and butler modes\n"
+        "♻️ Similarity filter\n"
+        "🗂 Temporal channel for filtered messages\n"
+        "©️ Images watermarks\n"
+        "🆘 Technical support\n"
+        "👥 Referral program\n\n"
+        "*How to Use:*\n"
+        "— Add a data source (RSS, Instagram, TikTok, etc.)\n"
+        "— Configure message template and filters\n"
+        "— Bot will forward & download new posts automatically!"
+        f"{ch_line}"
     )
 
 
@@ -541,6 +557,7 @@ async def flush(target, batch: list[Path], send_as: str) -> None:
     if not batch:
         return
 
+    file_handles = []
     try:
         if send_as == "documents":
             for f in batch:
@@ -554,22 +571,39 @@ async def flush(target, batch: list[Path], send_as: str) -> None:
         else:
             for chunk in _split_mixed(batch):
                 try:
+                    handles = []
                     if send_as == "photos":
-                        group = [InputMediaPhoto(open(f, "rb")) for f in chunk]
+                        for f in chunk:
+                            fh = open(f, "rb")
+                            file_handles.append(fh)
+                            handles.append(fh)
+                        group = [InputMediaPhoto(fh) for fh in handles]
                     elif send_as == "videos":
-                        group = [InputMediaVideo(open(f, "rb")) for f in chunk]
+                        for f in chunk:
+                            fh = open(f, "rb")
+                            file_handles.append(fh)
+                            handles.append(fh)
+                        group = [InputMediaVideo(fh) for fh in handles]
                     else:  # mixed
-                        group = [
-                            InputMediaPhoto(open(f, "rb")) if file_kind(f) == "photo"
-                            else InputMediaVideo(open(f, "rb"))
-                            for f in chunk
-                        ]
+                        for f in chunk:
+                            fh = open(f, "rb")
+                            file_handles.append(fh)
+                            if file_kind(f) == "photo":
+                                handles.append(InputMediaPhoto(fh))
+                            else:
+                                handles.append(InputMediaVideo(fh))
+                        group = handles
                     await _send_group(target, group)
                 except Exception:
                     for f in chunk:
                         kind = {"photos": "photo", "videos": "video"}.get(send_as) or file_kind(f)
                         await _send_one(target, f, kind)
     finally:
+        for fh in file_handles:
+            try:
+                fh.close()
+            except Exception:
+                pass
         for f in batch:
             try:
                 f.unlink(missing_ok=True)
@@ -833,10 +867,11 @@ async def do_special_download(msg, url: str, platform: str, mode: str,
         await send_menu(msg, uid, uname, name)
 
 
-def start_download_task(uid: int, coro) -> None:
+def start_download_task(uid: int, coro_func, *args) -> None:
     """
     Register a fresh stop-event for `uid`, then fire the coroutine as a task.
     BUG-09/10: signals any pre-existing run to quit before starting a new one.
+    Creates the event and passes it to the coroutine to ensure consistency.
     """
     old = STOP_EVENTS.get(uid)
     if old:
@@ -845,7 +880,7 @@ def start_download_task(uid: int, coro) -> None:
     ev = asyncio.Event()
     STOP_EVENTS[uid] = ev
     ACTIVE_USERS.add(uid)
-    asyncio.ensure_future(coro)
+    asyncio.ensure_future(coro_func(*args, ev))
 
 
 # =============================================================================
@@ -944,7 +979,8 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if state == S_ADD_URL:
         platform = ctx.user_data.get("platform")
         ctx.user_data["state"] = S_MAIN
-        if not platform:
+        if not platform or platform not in PLATFORMS:
+            await update.message.reply_text("❌ Invalid platform. Please try again.")
             await send_menu(update.message, uid, uname, name)
             return
 
@@ -970,21 +1006,21 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if state == S_STORY:
         platform = ctx.user_data.get("platform")
         ctx.user_data["state"] = S_MAIN
+        if not platform or platform not in PLATFORMS:
+            await update.message.reply_text("❌ Invalid platform. Please try again.")
+            await send_menu(update.message, uid, uname, name)
+            return
         ok, err = validate_url(text, platform)
         if not ok:
             await update.message.reply_text(f"❌ {err}")
             await send_menu(update.message, uid, uname, name)
             return
 
-        stop = asyncio.Event()
-        STOP_EVENTS[uid] = stop
-        ACTIVE_USERS.add(uid)
         start_download_task(
             uid,
-            do_special_download(
-                update.message, text, platform, "stories",
-                uid, uname, name, ctx.bot, stop,
-            ),
+            do_special_download,
+            update.message, text, platform, "stories",
+            uid, uname, name, ctx.bot,
         )
         return
 
@@ -992,21 +1028,21 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if state == S_HIGHLIGHT:
         platform = ctx.user_data.get("platform")
         ctx.user_data["state"] = S_MAIN
+        if not platform or platform not in PLATFORMS:
+            await update.message.reply_text("❌ Invalid platform. Please try again.")
+            await send_menu(update.message, uid, uname, name)
+            return
         ok, err = validate_url(text, platform)
         if not ok:
             await update.message.reply_text(f"❌ {err}")
             await send_menu(update.message, uid, uname, name)
             return
 
-        stop = asyncio.Event()
-        STOP_EVENTS[uid] = stop
-        ACTIVE_USERS.add(uid)
         start_download_task(
             uid,
-            do_special_download(
-                update.message, text, platform, "highlights",
-                uid, uname, name, ctx.bot, stop,
-            ),
+            do_special_download,
+            update.message, text, platform, "highlights",
+            uid, uname, name, ctx.bot,
         )
         return
 
@@ -1125,11 +1161,13 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         if uid in ACTIVE_USERS:
             await q.message.reply_text("⚠️ Already running.")
             return
-        stop = asyncio.Event()
-        start_download_task(
-            uid,
-            do_download(q.message, choice, uid, uname, name, ctx.bot, stop),
-        )
+        # Atomically check and set to prevent race conditions
+        if uid not in ACTIVE_USERS:  # Double-check before starting
+            start_download_task(
+                uid,
+                do_download,
+                q.message, choice, uid, uname, name, ctx.bot,
+            )
         return
 
     # ── stories ──────────────────────────────────────────────────────────────
