@@ -484,10 +484,12 @@ class Status:
             return
         try:
             await self.message.edit_text(text, parse_mode="Markdown")
-            self.last_at = now
+            self.last_at = time.monotonic()
             self.last_text = text
         except RetryAfter as exc:
+            # Wait the required time; update last_at so we don't immediately retry
             await asyncio.sleep(exc.retry_after + 0.5)
+            self.last_at = time.monotonic()
         except BadRequest:
             pass
         except Exception:
@@ -643,7 +645,7 @@ async def flush(target, batch: list[Path], send_as: str) -> None:
     try:
         if send_as == "documents":
             for f in batch:
-                await _send_one(target, f, "doc")
+                await _send_one(target, f, "document")
 
         elif len(batch) == 1:
             f = batch[0]
@@ -842,18 +844,26 @@ async def realtime_download(
     finally:
         # Wipe the per-run download dir only. Archive remains persistent.
         shutil.rmtree(out_dir, ignore_errors=True)
+        # Kill process if still running
         if proc.returncode is None:
             try:
                 proc.kill()
             except Exception:
                 pass
-        # Always drain stderr so we can log gallery-dl errors
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except Exception:
+                pass
+        # Read any remaining stderr for logging (non-blocking read of buffered data)
         try:
-            _, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=5)
-            if stderr_bytes and stderr_bytes.strip():
-                logger.warning("gallery-dl stderr [%s/%s]: %s",
-                               platform, handle,
-                               stderr_bytes.decode(errors="replace").strip())
+            if proc.stderr:
+                stderr_bytes = await asyncio.wait_for(proc.stderr.read(), timeout=3)
+                if stderr_bytes and stderr_bytes.strip():
+                    logger.warning(
+                        "gallery-dl stderr [%s/%s]: %s",
+                        platform, handle,
+                        stderr_bytes.decode(errors="replace").strip(),
+                    )
         except Exception:
             pass
 
@@ -928,9 +938,12 @@ async def do_download(msg, choice: str, uid: int, uname: str,
                         })
 
         elapsed = int((datetime.now() - started).total_seconds())
-        final = (f"⏹️ *Stopped.* {total} file(s) in {elapsed}s."
-                 if stop.is_set() else
-                 f"✅ *Done!* {total} file(s) in {elapsed}s.")
+        if total == 0 and not stop.is_set():
+            final = f"ℹ️ *No new media found.* (all already downloaded or no sources set)"
+        elif stop.is_set():
+            final = f"⏹️ *Stopped.* {total} file(s) in {elapsed}s."
+        else:
+            final = f"✅ *Done!* {total} file(s) in {elapsed}s."
         await status.set(final, force=True)
     finally:
         _release(uid, stop)
@@ -1282,8 +1295,15 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 
     if data.startswith("dl_"):
         choice = data[3:]
+        if choice not in ("1", "2", "3", "4"):
+            return
         if uid in ACTIVE_USERS:
             await q.message.reply_text("⚠️ Already running.")
+            return
+        if not any(read_profiles(uid, p) for p in PLATFORMS):
+            await q.message.reply_text(
+                "ℹ️ No sources added yet. Tap ➕ Add source first."
+            )
             return
         start_download_task(
             uid,
