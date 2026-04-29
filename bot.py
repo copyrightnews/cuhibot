@@ -47,7 +47,7 @@ from telegram import (
     InputMediaVideo,
     Update,
 )
-from telegram.error import BadRequest, RetryAfter
+from telegram.error import BadRequest, RetryAfter, TimedOut
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -551,8 +551,12 @@ async def _send_group(target, group: list) -> None:
         await bot.send_media_group(chat_id=cid, media=group)
 
 
-async def _send_one(target, f: Path, kind: str) -> bool:
-    """Send a single file. Returns True on success, False on failure."""
+async def _send_one(target, f: Path, kind: str, *, _retries: int = 0) -> bool:
+    """Send a single file. Returns True on success, False on failure.
+
+    Retries up to 4 times on TimedOut (large file upload) and RetryAfter
+    (rate limit) with exponential backoff.
+    """
     try:
         with open(f, "rb") as fh:
             if kind == "photo":
@@ -575,8 +579,22 @@ async def _send_one(target, f: Path, kind: str) -> bool:
                     await bot.send_document(chat_id=cid, document=fh)
         return True
     except RetryAfter as exc:
-        await asyncio.sleep(exc.retry_after + 0.5)
-        return await _send_one(target, f, kind)  # retry once
+        if _retries >= 3:
+            logger.warning("Giving up on %s after %d RetryAfter retries", f.name, _retries)
+            return False
+        wait = exc.retry_after + 1.0
+        logger.info("RetryAfter on %s — waiting %.1fs (attempt %d)", f.name, wait, _retries + 1)
+        await asyncio.sleep(wait)
+        return await _send_one(target, f, kind, _retries=_retries + 1)
+    except TimedOut:
+        if _retries >= 4:
+            logger.warning("Giving up on %s after %d TimedOut retries", f.name, _retries)
+            return False
+        wait = 5.0 * (2 ** _retries)   # 5s, 10s, 20s, 40s
+        logger.info("TimedOut on %s — waiting %.1fs then retrying (attempt %d)",
+                    f.name, wait, _retries + 1)
+        await asyncio.sleep(wait)
+        return await _send_one(target, f, kind, _retries=_retries + 1)
     except Exception:
         logger.warning("Failed to send %s as %s", f.name, kind, exc_info=True)
         return False
