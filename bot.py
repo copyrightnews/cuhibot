@@ -353,6 +353,20 @@ def total_sent(uid: int) -> int:
     return sum(e.get("sent", 0) for e in read_history(uid))
 
 
+def total_downloaded_mb(uid: int) -> float:
+    """Return cumulative downloaded bytes as MB from persistent settings."""
+    return round(read_settings(uid).get("total_bytes", 0) / (1024 * 1024), 1)
+
+
+def add_downloaded_bytes(uid: int, nbytes: int) -> None:
+    """Increment cumulative downloaded-byte counter in settings."""
+    if nbytes <= 0:
+        return
+    s = read_settings(uid)
+    s["total_bytes"] = s.get("total_bytes", 0) + nbytes
+    write_settings(uid, s)
+
+
 # =============================================================================
 # 4. VALIDATORS & NORMALIZERS
 # =============================================================================
@@ -481,8 +495,11 @@ def render_menu(uid: int, username: str, name: str) -> str:
     safe_name = _escape_md(name)
     ch = get_channel(uid)
     ch_line   = f"\n📡 Output: *{ch}*" if ch else ""
-    cached = folder_mb(udir(uid) / "downloads")
-    disk_line = f"\n💾 Cached: *{cached} MB*"
+    cached = total_downloaded_mb(uid)
+    if cached >= 1024:
+        disk_line = f"\n💾 Downloaded: *{round(cached / 1024, 2)} GB*"
+    else:
+        disk_line = f"\n💾 Downloaded: *{cached} MB*"
     return (
         f"@{safe_username}, {safe_name}\n"
         f"👤 ID: `{uid}`\n"
@@ -859,6 +876,7 @@ async def realtime_download(
     seen: set[Path] = set()
     buffer: list[Path] = []
     sent_count = 0
+    downloaded_bytes = 0  # track cumulative file sizes for this run
 
     async def drain() -> None:
         nonlocal sent_count
@@ -905,6 +923,10 @@ async def realtime_download(
 
                     seen.add(f)
                     buffer.append(f)
+                    try:
+                        downloaded_bytes += f.stat().st_size
+                    except OSError:
+                        pass
                     if len(buffer) >= MEDIA_GROUP_MAX:
                         await drain()
 
@@ -921,6 +943,10 @@ async def realtime_download(
                     continue
                 seen.add(f)
                 buffer.append(f)
+                try:
+                    downloaded_bytes += f.stat().st_size
+                except OSError:
+                    pass
                 if len(buffer) >= MEDIA_GROUP_MAX:
                     await drain()
 
@@ -970,6 +996,10 @@ async def realtime_download(
                     )
         except Exception:
             pass
+
+    # Persist cumulative downloaded bytes
+    if downloaded_bytes > 0:
+        add_downloaded_bytes(uid, downloaded_bytes)
 
     return sent_count
 
@@ -1589,17 +1619,18 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 
     # ── status ────────────────────────────────────────────────────────────────
     if data == "m_status":
-        cached = folder_mb(udir(uid) / "downloads")
+        dl_mb  = total_downloaded_mb(uid)
+        dl_str = f"{round(dl_mb / 1024, 2)} GB" if dl_mb >= 1024 else f"{dl_mb} MB"
         active = "▶️ Running" if uid in ACTIVE_USERS else "⏸️ Idle"
         ch     = get_channel(uid) or "Direct chat"
         text   = (
             f"📊 *Status*\n\n"
-            f"• State   : {active}\n"
-            f"• Sources : {total_profiles(uid)}\n"
-            f"• Cookies : {cookie_summary(uid)}\n"
-            f"• Channel : `{ch}`\n"
-            f"• Cached  : {cached} MB\n"
-            f"• Sent    : {total_sent(uid)} file(s)"
+            f"• State      : {active}\n"
+            f"• Sources    : {total_profiles(uid)}\n"
+            f"• Cookies    : {cookie_summary(uid)}\n"
+            f"• Channel    : `{ch}`\n"
+            f"• Downloaded : {dl_str}\n"
+            f"• Sent       : {total_sent(uid)} file(s)"
         )
         await q.message.edit_text(text, parse_mode="Markdown", reply_markup=kb_back())
         return
