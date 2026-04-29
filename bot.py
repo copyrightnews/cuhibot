@@ -4,9 +4,9 @@ Cuhi Bot — Media Downloader
 - No ConversationHandler (fixes all back button issues)
 - Instant stop via asyncio.Event + proc.kill()
 - Per-user isolated data
-- Albums, real-time, stories, highlights
+- Real-time grouped delivery (albums sent as they arrive)
+- Smart archive cleanup (mirrors download.sh logic)
 - Global cookies loaded from Railway env vars at startup
-- Real-time per-file delivery (no batching)
 """
 
 import asyncio, json, os
@@ -28,7 +28,6 @@ TOKEN        = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
 DATA_ROOT    = Path("./data")
 COOKIES_ROOT = Path("./cookies")
 
-# Global cookie directory — written from env vars at startup
 GLOBAL_COOKIES_DIR = COOKIES_ROOT / "global"
 
 PLATFORMS = {
@@ -38,7 +37,6 @@ PLATFORMS = {
     "x":         ("x_profiles.txt",         "x.com_cookies.txt",         1),
 }
 
-# Maps platform → Railway env var name
 COOKIE_ENV_VARS = {
     "instagram": "COOKIE_INSTAGRAM",
     "tiktok":    "COOKIE_TIKTOK",
@@ -56,6 +54,9 @@ PLATFORM_URLS = {
 PHOTO_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
 VIDEO_EXT = {".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v"}
 
+# Telegram album max size
+ALBUM_MAX = 10
+
 # Global per-user stop events
 STOP_EVENTS: dict[int, asyncio.Event] = {}
 
@@ -63,11 +64,8 @@ STOP_EVENTS: dict[int, asyncio.Event] = {}
 
 async def safe_api(fn, *args, **kwargs):
     """
-    Call any Telegram API method safely.
-    If Telegram returns RetryAfter (flood control), wait the required
-    number of seconds and retry automatically — forever if needed.
-    Any other exception is silently swallowed so one failed send never
-    crashes the whole download task.
+    Retries on flood control (RetryAfter). Swallows all other exceptions
+    so a single failed send never crashes the whole download task.
     """
     while True:
         try:
@@ -80,11 +78,6 @@ async def safe_api(fn, *args, **kwargs):
 # ── COOKIE BOOTSTRAP FROM ENV ─────────────────────────────────────────────────
 
 def load_cookies_from_env():
-    """
-    On startup, read COOKIE_INSTAGRAM / COOKIE_TIKTOK / COOKIE_FACEBOOK / COOKIE_X
-    from Railway environment variables and write them to ./cookies/global/.
-    Any variable that is empty or missing is silently skipped.
-    """
     GLOBAL_COOKIES_DIR.mkdir(parents=True, exist_ok=True)
     loaded = []
     for platform, env_var in COOKIE_ENV_VARS.items():
@@ -118,18 +111,10 @@ def settings_file(uid):
     return user_dir(uid) / "settings.json"
 
 def get_cookie_path(uid, cfile: str) -> Path:
-    """
-    Return the cookie path to use for a download:
-      1. User's own uploaded cookie  (cookies/<uid>/<cfile>)
-      2. Global env-var cookie       (cookies/global/<cfile>)
-    Falls back gracefully — gallery-dl will simply skip --cookies if
-    the returned path doesn't exist (handled in build_cmd).
-    """
     user_cookie = cookie_dir(uid) / cfile
     if user_cookie.exists():
         return user_cookie
-    global_cookie = GLOBAL_COOKIES_DIR / cfile
-    return global_cookie  # may or may not exist; build_cmd checks .exists()
+    return GLOBAL_COOKIES_DIR / cfile
 
 # ── DATA HELPERS ──────────────────────────────────────────────────────────────
 
@@ -168,11 +153,10 @@ def source_count(uid):
     return str(sum(len(load_profiles(uid, p)) for p in PLATFORMS))
 
 def cookie_status(uid):
-    """Show cookies that are available (user-specific OR global)."""
     ok = []
     for p in PLATFORMS:
         cfile = PLATFORMS[p][1]
-        user_ck  = cookie_dir(uid) / cfile
+        user_ck   = cookie_dir(uid) / cfile
         global_ck = GLOBAL_COOKIES_DIR / cfile
         if user_ck.exists():
             ok.append(f"{p}(own)")
@@ -183,7 +167,42 @@ def cookie_status(uid):
 def total_sent(uid):
     return sum(e.get("sent", 0) for e in load_history(uid))
 
-# ── USER STATE (replaces ConversationHandler) ─────────────────────────────────
+# ── ARCHIVE CLEANUP (mirrors download.sh logic) ───────────────────────────────
+
+def check_and_clean_archive(folder: Path):
+    """
+    Mirrors the check_and_clean_archive logic from download.sh:
+      - folder has 0 media files  → delete archive (so gallery-dl re-downloads)
+      - files on disk < archive entries → stale archive, delete it
+      - otherwise → archive valid, leave it alone
+    Called before each gallery-dl run so re-runs after manual file deletion work correctly.
+    """
+    archive = folder / "archive.txt"
+    media_exts = PHOTO_EXT | VIDEO_EXT
+
+    if not folder.exists():
+        return
+
+    file_count = sum(
+        1 for f in folder.iterdir()
+        if f.is_file() and f.name != "archive.txt" and f.suffix.lower() in media_exts
+    )
+
+    arch_count = 0
+    if archive.exists():
+        try:
+            arch_count = sum(1 for line in archive.read_text().splitlines() if line.strip())
+        except Exception:
+            arch_count = 0
+
+    if file_count == 0:
+        if archive.exists():
+            archive.unlink()
+    elif file_count < arch_count:
+        archive.unlink()
+    # else: archive valid, do nothing
+
+# ── USER STATE ────────────────────────────────────────────────────────────────
 
 STATE_MAIN          = "main"
 STATE_ADD_URL       = "add_url"
@@ -308,7 +327,6 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     name  = ctx.user_data.get("name", user.full_name)
     await q.answer()
 
-    # ── BACK — always works regardless of state ──
     if data == "m_back":
         set_state(ctx, STATE_MAIN)
         ctx.user_data.pop("add_platform", None)
@@ -317,7 +335,6 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await show_menu(q.message, uid, uname, name, edit=True)
         return
 
-    # ── MAIN MENU ACTIONS ──
     if data == "m_add":
         await q.message.edit_text(
             "➕ *Add source* — Choose platform:",
@@ -446,7 +463,6 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_kb(), parse_mode="Markdown")
         return
 
-    # ── PLATFORM → ADD URL ──
     if data.startswith("add_"):
         platform = data.split("_", 1)[1]
         ctx.user_data["add_platform"] = platform
@@ -457,7 +473,6 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_kb(), parse_mode="Markdown")
         return
 
-    # ── PLATFORM → REMOVE LIST ──
     if data.startswith("rem_"):
         platform = data.split("_", 1)[1]
         urls = load_profiles(uid, platform)
@@ -473,9 +488,8 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(rows), parse_mode="Markdown")
         return
 
-    # ── DELETE URL ──
     if data.startswith("del_"):
-        _, rest    = data.split("_", 1)
+        _, rest = data.split("_", 1)
         platform, url = rest.split("|||", 1)
         urls = load_profiles(uid, platform)
         if url in urls:
@@ -483,7 +497,6 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await show_menu(q.message, uid, uname, name, edit=True)
         return
 
-    # ── STORY PLATFORM ──
     if data.startswith("story_"):
         platform = data.split("_", 1)[1]
         ctx.user_data["story_platform"] = platform
@@ -494,7 +507,6 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_kb(), parse_mode="Markdown")
         return
 
-    # ── HIGHLIGHT PLATFORM ──
     if data.startswith("highlight_"):
         platform = data.split("_", 1)[1]
         ctx.user_data["highlight_platform"] = platform
@@ -505,7 +517,6 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             reply_markup=back_kb(), parse_mode="Markdown")
         return
 
-    # ── DOWNLOAD TYPE ──
     if data.startswith("dl_"):
         choice = data.split("_")[1]
         ev = asyncio.Event()
@@ -645,12 +656,70 @@ async def _send_single(target, f: Path, kind: str):
     except Exception:
         pass
 
+async def _send_group(target, group: list):
+    if hasattr(target, "reply_media_group"):
+        await safe_api(target.reply_media_group, group)
+    else:
+        bot, cid = target
+        await safe_api(bot.send_media_group, chat_id=cid, media=group)
+
+async def flush_album(target, album: list[Path], send_as: str):
+    """Send a list of files as a Telegram album (media group) if >1, else single."""
+    if not album:
+        return
+    if send_as == "documents":
+        for f in album:
+            await _send_single(target, f, "doc")
+        return
+    if len(album) == 1:
+        kind = "photo" if send_as == "photos" else \
+               "video" if send_as == "videos" else classify(album[0])
+        await _send_single(target, album[0], kind)
+        return
+    try:
+        group = []
+        for f in album:
+            if send_as == "photos":
+                group.append(InputMediaPhoto(open(f, "rb")))
+            elif send_as == "videos":
+                group.append(InputMediaVideo(open(f, "rb")))
+            else:
+                if classify(f) == "photo":
+                    group.append(InputMediaPhoto(open(f, "rb")))
+                else:
+                    group.append(InputMediaVideo(open(f, "rb")))
+        await _send_group(target, group)
+    except Exception:
+        # Fallback: send individually if album fails
+        for f in album:
+            kind = "photo" if send_as == "photos" else \
+                   "video" if send_as == "videos" else classify(f)
+            await _send_single(target, f, kind)
+
 # ── REALTIME DOWNLOAD ─────────────────────────────────────────────────────────
 
 async def realtime_download(target, out_dir: Path, cookie: Path,
                             sleep: int, url: str, mode: str,
                             stop: asyncio.Event) -> int:
+    """
+    Runs gallery-dl and watches the output folder in real time.
+
+    Grouping strategy:
+      - Files are added to an album as they appear on disk.
+      - Album is flushed (sent) immediately when it hits ALBUM_MAX (10).
+      - Album is also flushed when no new file has appeared for ~1 second,
+        giving real-time grouped delivery without waiting for a full 10.
+
+    Stop strategy:
+      - stop.is_set() is checked every 0.2s loop tick.
+      - proc.kill() is called immediately — halts within one tick (~0.2s).
+      - The stability check no longer uses asyncio.sleep so it never
+        blocks the stop check.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Archive cleanup before each run (mirrors download.sh logic)
+    check_and_clean_archive(out_dir)
 
     if mode == "photos":
         exts    = PHOTO_EXT
@@ -671,23 +740,21 @@ async def realtime_download(target, out_dir: Path, cookie: Path,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL)
 
-    seen: set[Path] = set()
+    seen:  set[Path]  = set()
+    album: list[Path] = []
     sent = 0
+    last_new_file_time = asyncio.get_event_loop().time()
 
-    async def send_file(f: Path):
+    async def flush_now():
         nonlocal sent
-        if send_as == "documents":
-            kind = "doc"
-        elif send_as == "photos":
-            kind = "photo"
-        elif send_as == "videos":
-            kind = "video"
-        else:
-            kind = classify(f)
-        await _send_single(target, f, kind)
-        sent += 1
+        if not album:
+            return
+        await flush_album(target, list(album), send_as)
+        sent += len(album)
+        album.clear()
 
     while True:
+        # ── STOP CHECK — highest priority, checked before and after sleep ──
         if stop.is_set():
             try: proc.kill()
             except Exception: pass
@@ -695,21 +762,45 @@ async def realtime_download(target, out_dir: Path, cookie: Path,
 
         await asyncio.sleep(0.2)
 
+        if stop.is_set():
+            try: proc.kill()
+            except Exception: pass
+            break
+
+        now = asyncio.get_event_loop().time()
+
+        # ── SCAN for new stable files ──────────────────────────────────────
         if out_dir.exists():
             for f in sorted(out_dir.iterdir()):
-                if f in seen or not f.is_file(): continue
-                if f.suffix.lower() not in exts:  continue
-                # Stability check — skip if file is still being written
+                if f in seen or not f.is_file():
+                    continue
+                if f.suffix.lower() not in exts:
+                    continue
+                if f.name == "archive.txt":
+                    continue
+                # Stability check: two immediate stat() reads — no sleep needed.
+                # If sizes differ the file is still being written; revisit next tick.
                 try:
-                    size1 = f.stat().st_size
-                    await asyncio.sleep(0.1)
-                    size2 = f.stat().st_size
-                    if size1 != size2 or size1 == 0: continue
+                    s1 = f.stat().st_size
+                    s2 = f.stat().st_size
+                    if s1 == 0 or s1 != s2:
+                        continue
                 except Exception:
                     continue
                 seen.add(f)
-                await send_file(f)   # ← send immediately, no buffering
+                album.append(f)
+                last_new_file_time = now
+                # Flush immediately if album is full
+                if len(album) >= ALBUM_MAX:
+                    await flush_now()
 
+        # ── TIME-BASED FLUSH: send current album if quiet for ~1s ─────────
+        # This delivers albums in real time even when < ALBUM_MAX files
+        # have arrived — no more waiting for a batch of 10.
+        if album and (now - last_new_file_time) >= 1.0:
+            await flush_now()
+
+        # ── CHECK if process finished ──────────────────────────────────────
         if proc.returncode is not None:
             break
 
@@ -718,15 +809,19 @@ async def realtime_download(target, out_dir: Path, cookie: Path,
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
 
-    # Final sweep for any files missed during the loop
+    # ── FINAL SWEEP — catch any files written in the last moments ──────────
     if not stop.is_set() and out_dir.exists():
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.3)
         for f in sorted(out_dir.iterdir()):
             if f in seen or not f.is_file(): continue
             if f.suffix.lower() not in exts:  continue
+            if f.name == "archive.txt":       continue
             seen.add(f)
-            await send_file(f)
+            album.append(f)
+            if len(album) >= ALBUM_MAX:
+                await flush_now()
 
+    await flush_now()
     return sent
 
 # ── DOWNLOAD ORCHESTRATOR ─────────────────────────────────────────────────────
@@ -739,6 +834,7 @@ async def do_download(msg, choice: str, uid: int,
                 "both":   "📦 Both",   "documents": "📁 Files"}[mode]
     channel     = get_channel(uid)
     send_target = (bot, channel) if channel else msg
+
     status = await safe_api(
         msg.reply_text,
         f"⏳ *{label}* — starting…" + (f"\n📡 → {channel}" if channel else ""),
@@ -827,7 +923,6 @@ async def do_special_download(msg, url: str, platform: str,
 def main():
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     COOKIES_ROOT.mkdir(parents=True, exist_ok=True)
-
     load_cookies_from_env()
 
     app = Application.builder().token(TOKEN).build()
