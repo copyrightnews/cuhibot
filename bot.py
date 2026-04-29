@@ -104,6 +104,27 @@ VIDEO_EXT = frozenset({".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v"})
 MEDIA_GROUP_MAX = 10       # Telegram limit
 STATUS_MIN_GAP  = 2.0      # seconds (BUG-06)
 
+# ── Security constants ───────────────────────────────────────────────────────
+# Comma-separated Telegram user IDs. If empty/unset, ALL users are allowed.
+# Example: ALLOWED_USERS=123456789,987654321
+_ALLOWED_RAW = os.environ.get("ALLOWED_USERS", "").strip()
+ALLOWED_USERS: set[int] = (
+    {int(x.strip()) for x in _ALLOWED_RAW.split(",") if x.strip().isdigit()}
+    if _ALLOWED_RAW else set()
+)
+
+# Comma-separated admin IDs. Admins can use /admin commands.
+_ADMIN_RAW = os.environ.get("ADMIN_IDS", "").strip()
+ADMIN_IDS: set[int] = (
+    {int(x.strip()) for x in _ADMIN_RAW.split(",") if x.strip().isdigit()}
+    if _ADMIN_RAW else set()
+)
+
+MAX_PROFILES_PER_PLATFORM = 50     # prevent abuse
+MAX_URL_LENGTH            = 500    # sane limit
+MAX_COOKIE_FILE_BYTES     = 1_048_576   # 1 MB
+RATE_LIMIT_SECONDS        = 30     # min gap between download starts per user
+
 # State keys
 S_MAIN, S_ADD_URL, S_SET_CHANNEL, S_STORY, S_HIGHLIGHT = (
     "main", "add_url", "set_channel", "story_url", "highlight_url"
@@ -112,6 +133,7 @@ S_MAIN, S_ADD_URL, S_SET_CHANNEL, S_STORY, S_HIGHLIGHT = (
 # Runtime registries
 STOP_EVENTS: dict[int, asyncio.Event] = {}
 ACTIVE_USERS: set[int]                = set()   # BUG-10
+_LAST_DOWNLOAD: dict[int, float]      = {}       # rate-limit tracker
 
 
 # =============================================================================
@@ -333,8 +355,13 @@ _URL_RE = re.compile(r"^https?://\S+$", re.IGNORECASE)
 
 def validate_url(url: str, platform: str) -> tuple[bool, str]:
     """BUG-07: ensure input is both well-formed AND on the right domain."""
+    if len(url) > MAX_URL_LENGTH:
+        return False, f"URL too long (max {MAX_URL_LENGTH} characters)."
     if not _URL_RE.match(url):
         return False, "Not a valid URL (must start with http:// or https://)."
+    # Block obvious injection attempts (semicolons, backticks, pipes)
+    if any(ch in url for ch in (';', '`', '|', '$', '&&')):
+        return False, "URL contains invalid characters."
     allowed = PLATFORM_DOMAINS[platform]
     if not any(dom in url.lower() for dom in allowed):
         return False, f"URL must belong to: {', '.join(allowed)}"
@@ -1028,6 +1055,35 @@ def _user(update: Update) -> tuple[int, str, str]:
     return u.id, u.username or "unknown", u.first_name or "User"
 
 
+def _is_allowed(uid: int) -> bool:
+    """Check if a user is allowed to use the bot.
+    If ALLOWED_USERS is empty, everyone is allowed (open mode).
+    Admins are always allowed.
+    """
+    if not ALLOWED_USERS:
+        return True   # open mode
+    return uid in ALLOWED_USERS or uid in ADMIN_IDS
+
+
+def _is_admin(uid: int) -> bool:
+    """Check if a user is a bot admin."""
+    return uid in ADMIN_IDS
+
+
+def _check_rate_limit(uid: int) -> tuple[bool, int]:
+    """Returns (allowed, seconds_remaining)."""
+    last = _LAST_DOWNLOAD.get(uid, 0)
+    elapsed = time.time() - last
+    if elapsed < RATE_LIMIT_SECONDS:
+        remaining = int(RATE_LIMIT_SECONDS - elapsed)
+        return False, remaining
+    return True, 0
+
+
+def _record_download_time(uid: int) -> None:
+    _LAST_DOWNLOAD[uid] = time.time()
+
+
 async def _answer(q) -> None:
     try:
         await q.answer()
@@ -1039,6 +1095,13 @@ async def _answer(q) -> None:
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     uid, uname, name = _user(update)
+    if not _is_allowed(uid):
+        await update.message.reply_text(
+            "🔒 *Access Denied*\n\nYou are not authorized to use this bot.",
+            parse_mode="Markdown",
+        )
+        logger.warning("Unauthorized access attempt by uid=%s username=%s", uid, uname)
+        return
     await send_menu(update.message, uid, uname, name)
 
 
@@ -1046,6 +1109,9 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_cleanup(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     uid, uname, name = _user(update)
+    if not _is_allowed(uid):
+        await update.message.reply_text("🔒 Access denied.")
+        return
     freed = wipe_downloads(uid)
     await update.message.reply_text(
         f"🗑️ Freed *{freed} MB* of cached downloads.", parse_mode="Markdown"
@@ -1058,8 +1124,18 @@ async def cmd_cleanup(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Accept a .txt cookies file and save it to the user's cookie dir."""
     uid, uname, name = _user(update)
+    if not _is_allowed(uid):
+        await update.message.reply_text("🔒 Access denied.")
+        return
     doc = update.message.document
     if not doc or not doc.file_name:
+        return
+
+    # Security: enforce file size limit
+    if doc.file_size and doc.file_size > MAX_COOKIE_FILE_BYTES:
+        await update.message.reply_text(
+            f"⚠️ Cookie file too large (max {MAX_COOKIE_FILE_BYTES // 1024} KB)."
+        )
         return
 
     fname = doc.file_name.lower()
@@ -1099,6 +1175,9 @@ async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     uid, uname, name = _user(update)
+    if not _is_allowed(uid):
+        await update.message.reply_text("🔒 Access denied.")
+        return
     text  = (update.message.text or "").strip()
     state = ctx.user_data.get("state", S_MAIN)
 
@@ -1134,6 +1213,10 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         existing = read_profiles(uid, platform)
         if text in existing:
             await update.message.reply_text("ℹ️ That URL is already in your list.")
+        elif len(existing) >= MAX_PROFILES_PER_PLATFORM:
+            await update.message.reply_text(
+                f"⚠️ Maximum {MAX_PROFILES_PER_PLATFORM} sources per platform reached."
+            )
         else:
             write_profiles(uid, platform, existing + [text])
             await update.message.reply_text(
@@ -1198,6 +1281,11 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
     uid, uname, name = _user(update)
     data = q.data or ""
     await _answer(q)
+
+    # Security: access control
+    if not _is_allowed(uid):
+        await q.message.reply_text("🔒 Access denied.")
+        return
 
     # ── back / main ──────────────────────────────────────────────────────────
     if data in ("m_back", "m_main"):
@@ -1324,6 +1412,14 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
                 "ℹ️ No sources added yet. Tap ➕ Add source first."
             )
             return
+        # Rate limiting
+        allowed, remaining = _check_rate_limit(uid)
+        if not allowed:
+            await q.message.reply_text(
+                f"⏳ Please wait {remaining}s before starting another download."
+            )
+            return
+        _record_download_time(uid)
         start_download_task(
             uid,
             do_download,
@@ -1484,8 +1580,40 @@ def bootstrap_env_cookies() -> None:
             print(f"[bootstrap] Failed to write {cookie_filename}: {exc}")
 
 
+async def cmd_admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin-only command: shows bot stats and active users."""
+    uid, uname, name = _user(update)
+    if not _is_admin(uid):
+        await update.message.reply_text("🔒 Admin access required.")
+        return
+
+    mode = "🔓 Open (all users)" if not ALLOWED_USERS else f"🔒 Restricted ({len(ALLOWED_USERS)} users)"
+    text = (
+        "🛡️ *Admin Panel*\n\n"
+        f"• Access mode : {mode}\n"
+        f"• Admin IDs   : {len(ADMIN_IDS)}\n"
+        f"• Active now  : {len(ACTIVE_USERS)}\n"
+        f"• Rate limit  : {RATE_LIMIT_SECONDS}s\n"
+        f"• Max profiles: {MAX_PROFILES_PER_PLATFORM}/platform\n"
+        f"• Max cookie  : {MAX_COOKIE_FILE_BYTES // 1024} KB\n"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
 def main() -> None:
+    if TOKEN == "YOUR_BOT_TOKEN":
+        logger.critical("BOT_TOKEN not set! Set the BOT_TOKEN environment variable.")
+        return
+
     bootstrap_env_cookies()
+
+    # Log security configuration at startup
+    if ALLOWED_USERS:
+        logger.info("Security: restricted mode — %d allowed users", len(ALLOWED_USERS))
+    else:
+        logger.info("Security: open mode — all users allowed (set ALLOWED_USERS to restrict)")
+    if ADMIN_IDS:
+        logger.info("Security: %d admin(s) configured", len(ADMIN_IDS))
 
     app = (
         Application.builder()
@@ -1497,6 +1625,7 @@ def main() -> None:
     app.add_handler(CommandHandler("start",   cmd_start))
     app.add_handler(CommandHandler("menu",    cmd_start))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
+    app.add_handler(CommandHandler("admin",   cmd_admin))
 
     # Inline buttons
     app.add_handler(CallbackQueryHandler(handle_callback))
