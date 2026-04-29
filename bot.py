@@ -1,880 +1,796 @@
 #!/usr/bin/env python3
-
 """
-Cuhi Bot — Media Downloader
-- No ConversationHandler (fixes all back button issues)
-- Instant stop via asyncio.Event + proc.kill()
-- Per-user isolated data
-- Albums, real-time, stories, highlights
-- FIX: Files deleted from disk immediately after sending (prevents OSError Errno 28)
-- FIX: Download dirs wiped after each profile run
-- FIX: /cleanup command to manually free disk space
+Cuhi Bot — patched edition.
+
+Every numbered comment tag (BUG-01 … BUG-16) maps back to the audit report.
+Layout:
+  1. Imports & constants
+  2. Locking, disk, path utilities
+  3. Persistence (profiles / history / settings)
+  4. Validators & normalizers
+  5. Keyboards & menu rendering
+  6. Status throttler
+  7. gallery-dl command builder
+  8. Sender (Telegram)
+  9. Real-time download engine
+ 10. High-level orchestrators
+ 11. Telegram handlers
+ 12. main()
 """
 
-import asyncio, json, os, shutil
+# =============================================================================
+# 1. IMPORTS & CONSTANTS
+# =============================================================================
+
+from __future__ import annotations
+
+import asyncio
+import fcntl
+import json
+import os
+import re
+import shutil
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    InputMediaPhoto, InputMediaVideo,
-)
-from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, filters, ContextTypes,
-)
+from typing import Iterable
 
-# ── CONFIG ────────────────────────────────────────────────────────────────────
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaPhoto,
+    InputMediaVideo,
+    Update,
+)
+from telegram.error import BadRequest, RetryAfter
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
 
-DATA_ROOT    = Path("./data")
-COOKIES_ROOT = Path("./cookies")
+DATA_ROOT    = Path(os.environ.get("DATA_ROOT",    "./data"))
+COOKIES_ROOT = Path(os.environ.get("COOKIES_ROOT", "./cookies"))
 
-PLATFORMS = {
-    "instagram": ("instagram_profiles.txt",  "instagram.com_cookies.txt",  3),
-    "tiktok":    ("tiktok_profiles.txt",      "tiktok.com_cookies.txt",     2),
-    "facebook":  ("facebook_profiles.txt",    "facebook.com_cookies.txt",   3),
-    "x":         ("x_profiles.txt",           "x.com_cookies.txt",          3),
+# (profiles_filename, cookie_filename, request_sleep_seconds)
+PLATFORMS: dict[str, tuple[str, str, int]] = {
+    "instagram": ("instagram_profiles.txt", "instagram.com_cookies.txt", 3),
+    "tiktok":    ("tiktok_profiles.txt",    "tiktok.com_cookies.txt",    2),
+    "facebook":  ("facebook_profiles.txt",  "facebook.com_cookies.txt",  3),
+    "x":         ("x_profiles.txt",         "x.com_cookies.txt",         3),
 }
 
-PLATFORM_URLS = {
+PLATFORM_DOMAINS: dict[str, tuple[str, ...]] = {
+    "instagram": ("instagram.com",),
+    "tiktok":    ("tiktok.com",),
+    "facebook":  ("facebook.com", "fb.com", "m.facebook.com"),
+    "x":         ("x.com", "twitter.com"),
+}
+
+PLATFORM_URL_HINTS: dict[str, str] = {
     "instagram": "https://www.instagram.com/",
     "tiktok":    "https://www.tiktok.com/@",
     "facebook":  "https://www.facebook.com/",
     "x":         "https://x.com/",
 }
 
-PHOTO_EXT = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
-VIDEO_EXT = {".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v"}
+PHOTO_EXT = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"})
+VIDEO_EXT = frozenset({".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v"})
 
-# Global per-user stop events
+MEDIA_GROUP_MAX = 10       # Telegram limit
+STATUS_MIN_GAP  = 2.0      # seconds (BUG-06)
+
+# State keys
+S_MAIN, S_ADD_URL, S_SET_CHANNEL, S_STORY, S_HIGHLIGHT = (
+    "main", "add_url", "set_channel", "story_url", "highlight_url"
+)
+
+# Runtime registries
 STOP_EVENTS: dict[int, asyncio.Event] = {}
+ACTIVE_USERS: set[int]                = set()   # BUG-10
 
-# ── PER-USER PATHS ────────────────────────────────────────────────────────────
 
-def user_dir(uid):
-    p = DATA_ROOT / str(uid); p.mkdir(parents=True, exist_ok=True); return p
+# =============================================================================
+# 2. LOCKING, DISK, PATH UTILITIES
+# =============================================================================
 
-def cookie_dir(uid):
-    p = COOKIES_ROOT / str(uid); p.mkdir(parents=True, exist_ok=True); return p
+@contextmanager
+def locked_file(target: Path):
+    """Advisory POSIX lock around a sibling `.lock` file. BUG-08."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = target.with_suffix(target.suffix + ".lock")
+    with open(lock_path, "w") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
-def profile_file(uid, platform):
-    return user_dir(uid) / PLATFORMS[platform][0]
 
-def history_file(uid):
-    return user_dir(uid) / "history.json"
+def udir(uid: int) -> Path:
+    p = DATA_ROOT / str(uid)
+    p.mkdir(parents=True, exist_ok=True)
+    return p
 
-def settings_file(uid):
-    return user_dir(uid) / "settings.json"
 
-# ── DISK USAGE HELPER ─────────────────────────────────────────────────────────
+def cdir(uid: int) -> Path:
+    p = COOKIES_ROOT / str(uid)
+    p.mkdir(parents=True, exist_ok=True)
+    return p
 
-def dir_size_mb(path: Path) -> float:
-    """Return directory size in MB (0.0 if not exists)."""
+
+def profiles_path(uid: int, platform: str) -> Path:
+    return udir(uid) / PLATFORMS[platform][0]
+
+
+def history_path(uid: int) -> Path:
+    return udir(uid) / "history.json"
+
+
+def settings_path(uid: int) -> Path:
+    return udir(uid) / "settings.json"
+
+
+def archive_path(uid: int, platform: str, handle: str, mode: str) -> Path:
+    """Persistent gallery-dl archive, stored OUTSIDE the volatile download dir. BUG-05, BUG-11."""
+    base = udir(uid) / "archives" / platform / handle
+    base.mkdir(parents=True, exist_ok=True)
+    return base / f"{mode}.txt"
+
+
+def folder_mb(path: Path) -> float:
     if not path.exists():
         return 0.0
     total = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
     return round(total / (1024 * 1024), 2)
 
-def cleanup_downloads(uid: int) -> float:
-    """Delete all downloaded media for a user. Returns freed MB."""
-    dl = DATA_ROOT / str(uid) / "downloads"
-    freed = dir_size_mb(dl)
-    if dl.exists():
-        shutil.rmtree(dl, ignore_errors=True)
+
+def wipe_downloads(uid: int) -> float:
+    root = udir(uid) / "downloads"
+    freed = folder_mb(root)
+    shutil.rmtree(root, ignore_errors=True)
     return freed
 
-# ── DATA HELPERS ──────────────────────────────────────────────────────────────
 
-def load_profiles(uid, p):
-    f = profile_file(uid, p)
-    return [l.strip() for l in f.read_text().splitlines() if l.strip()] if f.exists() else []
+# =============================================================================
+# 3. PERSISTENCE
+# =============================================================================
 
-def save_profiles(uid, p, urls):
-    profile_file(uid, p).write_text("\n".join(urls) + "\n")
+def read_profiles(uid: int, platform: str) -> list[str]:
+    p = profiles_path(uid, platform)
+    if not p.exists():
+        return []
+    return [line.strip() for line in p.read_text().splitlines() if line.strip()]
 
-def load_history(uid):
-    f = history_file(uid)
-    return json.loads(f.read_text()) if f.exists() else []
 
-def save_history(uid, entry):
-    h = load_history(uid); h.insert(0, entry)
-    history_file(uid).write_text(json.dumps(h[:50], indent=2))
+def write_profiles(uid: int, platform: str, urls: Iterable[str]) -> None:
+    path = profiles_path(uid, platform)
+    with locked_file(path):
+        path.write_text("\n".join(urls) + "\n")
 
-def load_settings(uid):
-    f = settings_file(uid)
-    return json.loads(f.read_text()) if f.exists() else {}
 
-def save_settings(uid, data):
-    settings_file(uid).write_text(json.dumps(data, indent=2))
+def read_history(uid: int) -> list[dict]:
+    p = history_path(uid)
+    if not p.exists():
+        return []
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return []
 
-def get_channel(uid):
-    return load_settings(uid).get("channel")
 
-def set_channel(uid, val):
-    s = load_settings(uid)
-    if val: s["channel"] = val
-    else:   s.pop("channel", None)
-    save_settings(uid, s)
+def append_history(uid: int, entry: dict) -> None:
+    path = history_path(uid)
+    with locked_file(path):                      # BUG-08
+        current = read_history(uid)
+        current.insert(0, entry)
+        path.write_text(json.dumps(current[:50], indent=2))
 
-def source_count(uid):
-    return str(sum(len(load_profiles(uid, p)) for p in PLATFORMS))
 
-def cookie_status(uid):
-    ok = [p for p in PLATFORMS if (cookie_dir(uid) / PLATFORMS[p][1]).exists()]
+def read_settings(uid: int) -> dict:
+    p = settings_path(uid)
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return {}
+
+
+def write_settings(uid: int, data: dict) -> None:
+    path = settings_path(uid)
+    with locked_file(path):
+        path.write_text(json.dumps(data, indent=2))
+
+
+def get_channel(uid: int):
+    return read_settings(uid).get("channel")
+
+
+def set_channel(uid: int, value) -> None:
+    s = read_settings(uid)
+    if value in (None, "", "clear"):
+        s.pop("channel", None)
+    else:
+        s["channel"] = value
+    write_settings(uid, s)
+
+
+def total_profiles(uid: int) -> int:              # BUG-16
+    return sum(len(read_profiles(uid, p)) for p in PLATFORMS)
+
+
+def cookie_summary(uid: int) -> str:
+    ok = [p for p in PLATFORMS if (cdir(uid) / PLATFORMS[p][1]).exists()]
     return ", ".join(ok) if ok else "none"
 
-def total_sent(uid):
-    return sum(e.get("sent", 0) for e in load_history(uid))
 
-# ── USER STATE (replaces ConversationHandler) ─────────────────────────────────
+def total_sent(uid: int) -> int:
+    return sum(e.get("sent", 0) for e in read_history(uid))
 
-STATE_MAIN          = "main"
-STATE_ADD_URL       = "add_url"
-STATE_SET_CHANNEL   = "set_channel"
-STATE_STORY_URL     = "story_url"
-STATE_HIGHLIGHT_URL = "highlight_url"
 
-def get_state(ctx): return ctx.user_data.get("state", STATE_MAIN)
-def set_state(ctx, s): ctx.user_data["state"] = s
+# =============================================================================
+# 4. VALIDATORS & NORMALIZERS
+# =============================================================================
 
-# ── MENU TEXT ─────────────────────────────────────────────────────────────────
+_URL_RE = re.compile(r"^https?://\S+$", re.IGNORECASE)
 
-def menu_text(uid, username, name):
-    ch = get_channel(uid)
-    ch_line = f"\n📡 Output: *{ch}*" if ch else ""
-    dl_mb = dir_size_mb(DATA_ROOT / str(uid) / "downloads")
-    disk_line = f"\n💾 Cached: *{dl_mb} MB*" if dl_mb > 0 else ""
-    return (
-        f"@{username}, {name}\n"
-        f"🪪 ID: `{uid}`\n"
-        f"🆓 Free account\n"
-        f"✅ Downloaded Media: *{total_sent(uid)}*\n\n"
-        "📩 *Cuhi Bot* — One of the best forwarders from RSS and social networks "
-        "(TikTok, Instagram, YouTube, Twitter, Reddit, Facebook, Telegram, VK) to Telegram.\n\n"
-        "*Features:*\n"
-        "🔀 Private or channel/group modes\n"
-        "🔖 Photos, videos and files delivery\n"
-        "🚀 Direct Telegram connection\n"
-        "🤩 Custom Emojis\n"
-        "⚡️ Fast refresh rate\n"
-        "✂️ Filters, replacements, message templates, text splitting, etc..\n"
-        "🎙 Live streams and premieres processing for videos\n"
-        "🕵️‍♂️ Moderation and butler modes\n"
-        "♻️ Similarity filter\n"
-        "🗂 Temporal channel for filtered messages\n"
-        "©️ Images watermarks\n"
-        "🆘 Technical support\n"
-        "👥 Referral program\n\n"
-        "*How to Use:*\n"
-        "— Add a data source (RSS, Instagram, TikTok, etc.)\n"
-        "— Configure message template and filters\n"
-        "— Bot will forward & download new posts automatically!\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f" 🗂 Sources : *{source_count(uid)}*\n"
-        f" 🍪 Cookies : *{cookie_status(uid)}*"
-        f"{ch_line}"
-        f"{disk_line}\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "👨‍💻 Developer: @copyrightpost"
-    )
 
-# ── KEYBOARDS ─────────────────────────────────────────────────────────────────
+def validate_url(url: str, platform: str) -> tuple[bool, str]:
+    """BUG-07: ensure input is both well-formed AND on the right domain."""
+    if not _URL_RE.match(url):
+        return False, "Not a valid URL (must start with http:// or https://)."
+    allowed = PLATFORM_DOMAINS[platform]
+    if not any(dom in url.lower() for dom in allowed):
+        return False, f"URL must belong to: {', '.join(allowed)}"
+    return True, ""
 
-def main_menu_kb():
+
+def normalize_chat(value: str):
+    """BUG-03: convert user-entered channel strings into valid Telegram chat IDs."""
+    v = value.strip()
+    if v.startswith("@"):
+        return v
+    if v.lstrip("-").isdigit():
+        n = int(v)
+        # Channels / supergroups are -100 prefixed when numeric
+        return n if n < 0 else int(f"-100{n}")
+    return v  # let Telegram reject if it's garbage
+
+
+def handle_from_url(url: str) -> str:
+    return url.rstrip("/").split("/")[-1].lstrip("@")
+
+
+def stories_url_for(platform: str, url: str) -> str:
+    """BUG-01: explicit rewrite so intent is unambiguous."""
+    if platform == "instagram":
+        return f"https://www.instagram.com/stories/{handle_from_url(url)}/"
+    return url
+
+
+def highlights_url_for(platform: str, url: str) -> str:
+    """BUG-14: use gallery-dl's real highlights endpoint instead of a no-op."""
+    if platform == "instagram":
+        return f"https://www.instagram.com/stories/highlights/{handle_from_url(url)}/"
+    return url
+
+
+# =============================================================================
+# 5. KEYBOARDS & MENU
+# =============================================================================
+
+def kb_main() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Add source",      callback_data="m_add"),
-         InlineKeyboardButton("🚫 Remove source",   callback_data="m_remove")],
-        [InlineKeyboardButton("🌐 My sources",      callback_data="m_list"),
-         InlineKeyboardButton("✅ Run download",     callback_data="m_run")],
-        [InlineKeyboardButton("📖 Stories",         callback_data="m_stories"),
-         InlineKeyboardButton("✨ Highlights",       callback_data="m_highlights")],
-        [InlineKeyboardButton("🚫 Stop download",   callback_data="m_stop"),
-         InlineKeyboardButton("📜 History",         callback_data="m_history")],
-        [InlineKeyboardButton("🍪 Set cookies",     callback_data="m_cookies"),
-         InlineKeyboardButton("📊 Status",          callback_data="m_status")],
-        [InlineKeyboardButton("📡 Set channel",     callback_data="m_channel"),
-         InlineKeyboardButton("🗑️ Free disk",       callback_data="m_cleanup")],
+        [InlineKeyboardButton("➕ Add source",    callback_data="m_add"),
+         InlineKeyboardButton("🚫 Remove source", callback_data="m_remove")],
+        [InlineKeyboardButton("🌐 My sources",    callback_data="m_list"),
+         InlineKeyboardButton("✅ Run download",  callback_data="m_run")],
+        [InlineKeyboardButton("📖 Stories",       callback_data="m_stories"),
+         InlineKeyboardButton("✨ Highlights",     callback_data="m_highlights")],
+        [InlineKeyboardButton("🚫 Stop download", callback_data="m_stop"),
+         InlineKeyboardButton("📜 History",       callback_data="m_history")],
+        [InlineKeyboardButton("🍪 Set cookies",   callback_data="m_cookies"),
+         InlineKeyboardButton("📊 Status",        callback_data="m_status")],
+        [InlineKeyboardButton("📡 Set channel",   callback_data="m_channel"),
+         InlineKeyboardButton("🗑️ Free disk",     callback_data="m_cleanup")],
     ])
 
-def back_kb():
+
+def kb_back() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="m_back")]])
 
-def platform_kb(prefix):
+
+def kb_platforms(prefix: str) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(p.capitalize(), callback_data=f"{prefix}_{p}")]
             for p in PLATFORMS]
     rows.append([InlineKeyboardButton("🔙 Back", callback_data="m_back")])
     return InlineKeyboardMarkup(rows)
 
-def media_kb():
+
+def kb_media() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🖼️ Photos only",        callback_data="dl_1")],
-        [InlineKeyboardButton("🎬 Videos only",        callback_data="dl_2")],
-        [InlineKeyboardButton("🔖 Both (separately)",  callback_data="dl_3")],
-        [InlineKeyboardButton("📁 Files (as docs)",    callback_data="dl_4")],
-        [InlineKeyboardButton("🔙 Back",               callback_data="m_back")],
+        [InlineKeyboardButton("🖼️ Photos only",       callback_data="dl_1")],
+        [InlineKeyboardButton("🎬 Videos only",       callback_data="dl_2")],
+        [InlineKeyboardButton("🔖 Both (separately)", callback_data="dl_3")],
+        [InlineKeyboardButton("📁 Files (as docs)",   callback_data="dl_4")],
+        [InlineKeyboardButton("🔙 Back",              callback_data="m_back")],
     ])
 
-# ── SHOW MENU ─────────────────────────────────────────────────────────────────
 
-async def show_menu(msg, uid, username, name, edit=False):
-    text = menu_text(uid, username, name)
+def render_menu(uid: int, username: str, name: str) -> str:
+    ch = get_channel(uid)
+    ch_line   = f"\n📡 Output: *{ch}*" if ch else ""
+    cached    = folder_mb(udir(uid) / "downloads")
+    disk_line = f"\n💾 Cached: *{cached} MB*" if cached > 0 else ""
+    return (
+        f"@{username}, {name}\n"
+        f"🪪 ID: `{uid}`\n"
+        f"🆓 Free account\n"
+        f"✅ Downloaded Media: *{total_sent(uid)}*\n\n"
+        "📩 *Cuhi Bot* — downloader & forwarder for "
+        "Instagram, TikTok, Facebook, and X.\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f" 🗂 Sources : *{total_profiles(uid)}*\n"
+        f" 🍪 Cookies : *{cookie_summary(uid)}*"
+        f"{ch_line}{disk_line}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "👨‍💻 Developer: @copyrightpost"
+    )
+
+
+async def send_menu(msg, uid: int, username: str, name: str, *, edit=False) -> None:
+    text = render_menu(uid, username, name)
     try:
         if edit:
-            await msg.edit_text(text, reply_markup=main_menu_kb(), parse_mode="Markdown")
+            await msg.edit_text(text, reply_markup=kb_main(), parse_mode="Markdown")
         else:
-            await msg.reply_text(text, reply_markup=main_menu_kb(), parse_mode="Markdown")
-    except Exception:
+            await msg.reply_text(text, reply_markup=kb_main(), parse_mode="Markdown")
+    except BadRequest:
         try:
-            await msg.reply_text(
-                f"@{username} | ✅ Sent: *{total_sent(uid)}* | 🗂 Sources: *{source_count(uid)}*",
-                reply_markup=main_menu_kb(), parse_mode="Markdown")
+            await msg.reply_text(text, reply_markup=kb_main(), parse_mode="Markdown")
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+# =============================================================================
+# 6. STATUS THROTTLER
+# =============================================================================
+
+@dataclass
+class Status:
+    """BUG-06: rate-limited edit_text wrapper that respects RetryAfter."""
+    message: object
+    last_at: float = 0.0
+    last_text: str = ""
+
+    async def set(self, text: str, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if not force and (now - self.last_at) < STATUS_MIN_GAP:
+            return
+        if text == self.last_text:
+            return
+        try:
+            await self.message.edit_text(text, parse_mode="Markdown")
+            self.last_at = now
+            self.last_text = text
+        except RetryAfter as exc:
+            await asyncio.sleep(exc.retry_after + 0.5)
+        except BadRequest:
+            pass
         except Exception:
             pass
 
-# ── /start & /menu ────────────────────────────────────────────────────────────
 
-async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    uid  = user.id
-    user_dir(uid)
-    ctx.user_data["username"] = user.username or "user"
-    ctx.user_data["name"]     = user.full_name
-    set_state(ctx, STATE_MAIN)
-    await show_menu(update.effective_message, uid,
-                    ctx.user_data["username"], ctx.user_data["name"])
+# =============================================================================
+# 7. GALLERY-DL COMMAND BUILDER
+# =============================================================================
 
-# ── /cleanup command ──────────────────────────────────────────────────────────
-
-async def cmd_cleanup(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid   = update.effective_user.id
-    uname = ctx.user_data.get("username", update.effective_user.username or "user")
-    name  = ctx.user_data.get("name", update.effective_user.full_name)
-    freed = cleanup_downloads(uid)
-    await update.message.reply_text(
-        f"🗑️ *Disk cleanup complete!*\nFreed: *{freed} MB*",
-        parse_mode="Markdown")
-    await show_menu(update.message, uid, uname, name)
-
-# ── CALLBACK HANDLER ──────────────────────────────────────────────────────────
-
-async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    q    = update.callback_query
-    data = q.data
-    user = q.from_user
-    uid  = user.id
-    uname = ctx.user_data.get("username", user.username or "user")
-    name  = ctx.user_data.get("name", user.full_name)
-
-    await q.answer()
-
-    # ── BACK — always works regardless of state ──
-    if data == "m_back":
-        set_state(ctx, STATE_MAIN)
-        ctx.user_data.pop("add_platform", None)
-        ctx.user_data.pop("story_platform", None)
-        ctx.user_data.pop("highlight_platform", None)
-        await show_menu(q.message, uid, uname, name, edit=True)
-        return
-
-    # ── MAIN MENU ACTIONS ──
-
-    if data == "m_add":
-        await q.message.edit_text(
-            "➕ *Add source* — Choose platform:",
-            reply_markup=platform_kb("add"), parse_mode="Markdown")
-        return
-
-    if data == "m_remove":
-        await q.message.edit_text(
-            "🗑️ *Remove source* — Choose platform:",
-            reply_markup=platform_kb("rem"), parse_mode="Markdown")
-        return
-
-    if data == "m_list":
-        lines = []
-        for p in PLATFORMS:
-            urls = load_profiles(uid, p)
-            if urls:
-                lines.append(f"*{p.upper()}*")
-                lines += [f"  • `{u}`" for u in urls]
-        text = "\n".join(lines) if lines else "No sources added yet."
-        await q.message.edit_text(text, reply_markup=back_kb(), parse_mode="Markdown")
-        return
-
-    if data == "m_run":
-        if not any(load_profiles(uid, p) for p in PLATFORMS):
-            await q.message.edit_text("⚠️ No sources yet. Add one first.", reply_markup=back_kb())
-            return
-        await q.message.edit_text(
-            "🚀 *What to download?*\n\n"
-            "🖼️ *Photos only* — sends as images\n"
-            "🎬 *Videos only* — sends as videos\n"
-            "📦 *Both* — photos then videos\n"
-            "📁 *Files* — sends as documents",
-            reply_markup=media_kb(), parse_mode="Markdown")
-        return
-
-    if data == "m_stories":
-        await q.message.edit_text(
-            "📖 *Download Stories* — Choose platform:",
-            reply_markup=platform_kb("story"), parse_mode="Markdown")
-        return
-
-    if data == "m_highlights":
-        await q.message.edit_text(
-            "🌟 *Download Highlights* — Choose platform:",
-            reply_markup=platform_kb("highlight"), parse_mode="Markdown")
-        return
-
-    if data == "m_stop":
-        ev = STOP_EVENTS.get(uid)
-        if ev and not ev.is_set():
-            ev.set()
-            await q.message.edit_text(
-                "⏹️ *Stop signal sent.* Download will halt immediately.",
-                reply_markup=back_kb(), parse_mode="Markdown")
-        else:
-            await q.message.edit_text("Nothing is running.", reply_markup=back_kb())
-        return
-
-    if data == "m_history":
-        h = load_history(uid)
-        if not h:
-            text = "No history yet."
-        else:
-            rows = [f"• {e['date']} {e['platform']} `{e['user']}` {e['sent']} files"
-                    for e in h[:10]]
-            text = "*📜 Last 10 downloads:*\n" + "\n".join(rows)
-        await q.message.edit_text(text, reply_markup=back_kb(), parse_mode="Markdown")
-        return
-
-    if data == "m_cookies":
-        await q.message.edit_text(
-            "🍪 *Set cookies*\n\n"
-            "Send the file named exactly:\n"
-            "`instagram.com_cookies.txt`\n"
-            "`tiktok.com_cookies.txt`\n"
-            "`facebook.com_cookies.txt`\n"
-            "`x.com_cookies.txt`\n\n"
-            "Export with *Get cookies.txt LOCALLY* Chrome extension.",
-            reply_markup=back_kb(), parse_mode="Markdown")
-        return
-
-    if data == "m_status":
-        lines = ["*📊 Platform status:*"]
-        for p in PLATFORMS:
-            n  = len(load_profiles(uid, p))
-            ck = "✅" if (cookie_dir(uid) / PLATFORMS[p][1]).exists() else "❌"
-            lines.append(f"  {p.capitalize():<12} profiles: {n}  cookies: {ck}")
-        ch = get_channel(uid)
-        lines.append(f"\n📡 Channel: *{ch or 'not set'}*")
-        dl_mb = dir_size_mb(DATA_ROOT / str(uid) / "downloads")
-        lines.append(f"💾 Cached on disk: *{dl_mb} MB*")
-        await q.message.edit_text("\n".join(lines), reply_markup=back_kb(), parse_mode="Markdown")
-        return
-
-    if data == "m_channel":
-        ch = get_channel(uid)
-        set_state(ctx, STATE_SET_CHANNEL)
-        await q.message.edit_text(
-            f"📡 *Set output channel*\n\n"
-            f"Current: *{ch or 'not set'}*\n\n"
-            "Send channel username:\n`@yourchannel`\n\n"
-            "Or send `clear` to remove.\n"
-            "Bot must be *admin* in the channel.",
-            reply_markup=back_kb(), parse_mode="Markdown")
-        return
-
-    # ── FREE DISK (inline cleanup button) ──
-    if data == "m_cleanup":
-        freed = cleanup_downloads(uid)
-        await q.message.edit_text(
-            f"🗑️ *Disk cleanup complete!*\nFreed: *{freed} MB*",
-            reply_markup=back_kb(), parse_mode="Markdown")
-        return
-
-    # ── PLATFORM → ADD URL ──
-    if data.startswith("add_"):
-        platform = data.split("_", 1)[1]
-        ctx.user_data["add_platform"] = platform
-        set_state(ctx, STATE_ADD_URL)
-        await q.message.edit_text(
-            f"➕ *Add {platform.capitalize()} profile*\n\n"
-            f"Send the profile URL:\n`{PLATFORM_URLS[platform]}username/`",
-            reply_markup=back_kb(), parse_mode="Markdown")
-        return
-
-    # ── PLATFORM → REMOVE LIST ──
-    if data.startswith("rem_"):
-        platform = data.split("_", 1)[1]
-        urls = load_profiles(uid, platform)
-        if not urls:
-            await q.message.edit_text(f"No profiles for {platform}.", reply_markup=back_kb())
-            return
-        rows = [[InlineKeyboardButton(
-                    u.rstrip("/").split("/")[-1],
-                    callback_data=f"del_{platform}|||{u}")] for u in urls]
-        rows.append([InlineKeyboardButton("🔙 Back", callback_data="m_back")])
-        await q.message.edit_text(
-            f"🗑️ Tap profile to remove from *{platform}*:",
-            reply_markup=InlineKeyboardMarkup(rows), parse_mode="Markdown")
-        return
-
-    # ── DELETE URL ──
-    if data.startswith("del_"):
-        _, rest     = data.split("_", 1)
-        platform, url = rest.split("|||", 1)
-        urls = load_profiles(uid, platform)
-        if url in urls:
-            urls.remove(url); save_profiles(uid, platform, urls)
-        await show_menu(q.message, uid, uname, name, edit=True)
-        return
-
-    # ── STORY PLATFORM ──
-    if data.startswith("story_"):
-        platform = data.split("_", 1)[1]
-        ctx.user_data["story_platform"] = platform
-        set_state(ctx, STATE_STORY_URL)
-        await q.message.edit_text(
-            f"📖 *{platform.capitalize()} Stories*\n\n"
-            f"Send the profile URL:\n`{PLATFORM_URLS[platform]}username/`",
-            reply_markup=back_kb(), parse_mode="Markdown")
-        return
-
-    # ── HIGHLIGHT PLATFORM ──
-    if data.startswith("highlight_"):
-        platform = data.split("_", 1)[1]
-        ctx.user_data["highlight_platform"] = platform
-        set_state(ctx, STATE_HIGHLIGHT_URL)
-        await q.message.edit_text(
-            f"🌟 *{platform.capitalize()} Highlights*\n\n"
-            f"Send the profile URL:\n`{PLATFORM_URLS[platform]}username/`",
-            reply_markup=back_kb(), parse_mode="Markdown")
-        return
-
-    # ── DOWNLOAD TYPE ──
-    if data.startswith("dl_"):
-        choice = data.split("_")[1]
-        ev = asyncio.Event()
-        STOP_EVENTS[uid] = ev
-        asyncio.create_task(
-            do_download(q.message, choice, uid, uname, name, ctx.bot, ev))
-        return
-
-# ── TEXT HANDLER ──────────────────────────────────────────────────────────────
-
-async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user  = update.effective_user
-    uid   = user.id
-    uname = ctx.user_data.get("username", user.username or "user")
-    name  = ctx.user_data.get("name", user.full_name)
-    text  = update.message.text.strip()
-    state = get_state(ctx)
-
-    if state == STATE_SET_CHANNEL:
-        set_state(ctx, STATE_MAIN)
-        if text.lower() == "clear":
-            set_channel(uid, None)
-            await update.message.reply_text("📡 Channel removed.")
-        else:
-            set_channel(uid, text)
-            await update.message.reply_text(
-                f"📡 Channel set to *{text}*\nMake sure bot is admin there.",
-                parse_mode="Markdown")
-        await show_menu(update.message, uid, uname, name)
-        return
-
-    if state == STATE_ADD_URL:
-        platform = ctx.user_data.pop("add_platform", None)
-        if platform:
-            urls = load_profiles(uid, platform)
-            if text in urls:
-                await update.message.reply_text("Already in list.")
-            else:
-                urls.append(text); save_profiles(uid, platform, urls)
-                await update.message.reply_text(
-                    f"✅ Added to *{platform}*.", parse_mode="Markdown")
-        set_state(ctx, STATE_MAIN)
-        await show_menu(update.message, uid, uname, name)
-        return
-
-    if state == STATE_STORY_URL:
-        platform = ctx.user_data.pop("story_platform", None)
-        if platform:
-            ev = asyncio.Event()
-            STOP_EVENTS[uid] = ev
-            asyncio.create_task(
-                do_special_download(update.message, text, platform,
-                                    "stories", uid, uname, name, ctx.bot, ev))
-        set_state(ctx, STATE_MAIN)
-        return
-
-    if state == STATE_HIGHLIGHT_URL:
-        platform = ctx.user_data.pop("highlight_platform", None)
-        if platform:
-            ev = asyncio.Event()
-            STOP_EVENTS[uid] = ev
-            asyncio.create_task(
-                do_special_download(update.message, text, platform,
-                                    "highlights", uid, uname, name, ctx.bot, ev))
-        set_state(ctx, STATE_MAIN)
-        return
-
-# ── COOKIE UPLOAD ─────────────────────────────────────────────────────────────
-
-async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid   = update.effective_user.id
-    doc   = update.message.document
-    fname = doc.file_name
-    known = {PLATFORMS[p][1] for p in PLATFORMS}
-    if fname not in known:
-        await update.message.reply_text(
-            f"⚠ Unknown: `{fname}`\nExpected:\n" + "\n".join(f"`{k}`" for k in sorted(known)),
-            parse_mode="Markdown")
-        return
-    tg_file = await doc.get_file()
-    await tg_file.download_to_drive(str(cookie_dir(uid) / fname))
-    await update.message.reply_text(f"✅ Cookie saved: `{fname}`", parse_mode="Markdown")
-
-# ── GALLERY-DL CMD ────────────────────────────────────────────────────────────
-
-def build_cmd(out_dir: Path, cookie: Path, sleep: int,
-              url: str, mode: str) -> list[str]:
-    cmd = ["gallery-dl",
-           "-D", str(out_dir),
-           "--download-archive", str(out_dir / "archive.txt"),
-           "--sleep-request", str(sleep)]
+def build_gdl_cmd(
+    *,
+    out_dir: Path,
+    archive: Path,
+    cookie: Path,
+    sleep: int,
+    url: str,
+    mode: str,
+    platform: str,
+) -> tuple[list[str], str]:
+    """
+    Returns (argv, effective_url).
+    Explicit branches for every mode — no silent fall-through. BUG-01, BUG-04, BUG-14.
+    """
+    cmd = [
+        "gallery-dl",
+        "-D", str(out_dir),
+        "--download-archive", str(archive),
+        "--sleep-request", str(sleep),
+    ]
 
     if mode == "photos":
-        cmd += ["--filter",
-                "extension in ('jpg','jpeg','png','gif','webp','bmp')"]
+        cmd += ["--filter", "extension in ('jpg','jpeg','png','gif','webp','bmp')"]
+        effective = url
     elif mode == "videos":
-        cmd += ["--filter",
-                "extension in ('mp4','webm','mkv','mov','avi','m4v')"]
+        cmd += ["--filter", "extension in ('mp4','webm','mkv','mov','avi','m4v')"]
+        effective = url
+    elif mode == "documents":
+        effective = url
     elif mode == "stories":
-        if "instagram.com" in url:
-            user = url.rstrip("/").split("/")[-1].lstrip("@")
-            url  = f"https://www.instagram.com/stories/{user}/"
+        effective = stories_url_for(platform, url)
     elif mode == "highlights":
-        pass  # gallery-dl handles via profile URL
+        effective = highlights_url_for(platform, url)
+    elif mode == "both":
+        # The orchestrator splits "both" into two calls; reaching here means misuse.
+        raise ValueError("build_gdl_cmd: 'both' must be split into 'photos'+'videos'")
+    else:
+        effective = url
 
     if cookie.exists():
         cmd += ["--cookies", str(cookie)]
-    cmd.append(url)
-    return cmd
 
-# ── SEND HELPERS ──────────────────────────────────────────────────────────────
+    cmd.append(effective)
+    return cmd, effective
 
-def classify(f: Path) -> str:
+
+# =============================================================================
+# 8. SENDER
+# =============================================================================
+
+def file_kind(f: Path) -> str:
     return "photo" if f.suffix.lower() in PHOTO_EXT else "video"
 
-async def _send_group(target, group: list):
+
+async def _send_group(target, group: list) -> None:
     if hasattr(target, "reply_media_group"):
         await target.reply_media_group(group)
     else:
         bot, cid = target
         await bot.send_media_group(chat_id=cid, media=group)
 
-async def _send_single(target, f: Path, kind: str):
+
+async def _send_one(target, f: Path, kind: str) -> None:
     try:
-        if kind == "photo":
-            if hasattr(target, "reply_photo"):
-                await target.reply_photo(photo=open(f, "rb"))
+        with open(f, "rb") as fh:
+            if kind == "photo":
+                if hasattr(target, "reply_photo"):
+                    await target.reply_photo(photo=fh)
+                else:
+                    bot, cid = target
+                    await bot.send_photo(chat_id=cid, photo=fh)
+            elif kind == "video":
+                if hasattr(target, "reply_video"):
+                    await target.reply_video(video=fh)
+                else:
+                    bot, cid = target
+                    await bot.send_video(chat_id=cid, video=fh)
             else:
-                bot, cid = target
-                await bot.send_photo(chat_id=cid, photo=open(f, "rb"))
-        elif kind == "video":
-            if hasattr(target, "reply_video"):
-                await target.reply_video(video=open(f, "rb"))
-            else:
-                bot, cid = target
-                await bot.send_video(chat_id=cid, video=open(f, "rb"))
-        else:
-            if hasattr(target, "reply_document"):
-                await target.reply_document(document=open(f, "rb"))
-            else:
-                bot, cid = target
-                await bot.send_document(chat_id=cid, document=open(f, "rb"))
+                if hasattr(target, "reply_document"):
+                    await target.reply_document(document=fh)
+                else:
+                    bot, cid = target
+                    await bot.send_document(chat_id=cid, document=fh)
     except Exception:
         pass
 
-async def flush_batch(target, batch: list[Path], send_as: str):
-    """Send a batch (max 10) then DELETE files from disk immediately."""
+
+def _split_mixed(batch: list[Path]) -> list[list[Path]]:
+    """BUG-12: don't mix weird payloads; produce Telegram-compatible chunks <= 10."""
+    chunks: list[list[Path]] = []
+    current: list[Path] = []
+    for f in batch:
+        current.append(f)
+        if len(current) == MEDIA_GROUP_MAX:
+            chunks.append(current)
+            current = []
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+async def flush(target, batch: list[Path], send_as: str) -> None:
+    """Send the buffered batch, then delete local files (disk-full prevention)."""
     if not batch:
         return
 
-    if send_as == "documents":
-        for f in batch:
-            await _send_single(target, f, "doc")
-    elif len(batch) == 1:
-        f    = batch[0]
-        kind = ("photo" if send_as == "photos" else
-                "video" if send_as == "videos" else classify(f))
-        await _send_single(target, f, kind)
-    else:
-        try:
-            if send_as == "photos":
-                group = [InputMediaPhoto(open(f, "rb")) for f in batch]
-            elif send_as == "videos":
-                group = [InputMediaVideo(open(f, "rb")) for f in batch]
-            else:
-                group = []
-                for f in batch:
-                    if classify(f) == "photo":
-                        group.append(InputMediaPhoto(open(f, "rb")))
-                    else:
-                        group.append(InputMediaVideo(open(f, "rb")))
-            await _send_group(target, group)
-        except Exception:
+    try:
+        if send_as == "documents":
             for f in batch:
-                kind = ("photo" if send_as == "photos" else
-                        "video" if send_as == "videos" else classify(f))
-                await _send_single(target, f, kind)
+                await _send_one(target, f, "doc")
 
-    # ✅ FIX: Delete every file from disk right after sending
-    for f in batch:
-        try:
-            f.unlink(missing_ok=True)
-        except Exception:
-            pass
+        elif len(batch) == 1:
+            f = batch[0]
+            kind = {"photos": "photo", "videos": "video"}.get(send_as) or file_kind(f)
+            await _send_one(target, f, kind)
 
-# ── REALTIME DOWNLOAD ─────────────────────────────────────────────────────────
+        else:
+            for chunk in _split_mixed(batch):
+                try:
+                    if send_as == "photos":
+                        group = [InputMediaPhoto(open(f, "rb")) for f in chunk]
+                    elif send_as == "videos":
+                        group = [InputMediaVideo(open(f, "rb")) for f in chunk]
+                    else:  # mixed
+                        group = [
+                            InputMediaPhoto(open(f, "rb")) if file_kind(f) == "photo"
+                            else InputMediaVideo(open(f, "rb"))
+                            for f in chunk
+                        ]
+                    await _send_group(target, group)
+                except Exception:
+                    for f in chunk:
+                        kind = {"photos": "photo", "videos": "video"}.get(send_as) or file_kind(f)
+                        await _send_one(target, f, kind)
+    finally:
+        for f in batch:
+            try:
+                f.unlink(missing_ok=True)
+            except Exception:
+                pass
 
-async def realtime_download(target, out_dir: Path, cookie: Path,
-                            sleep: int, url: str, mode: str,
-                            stop: asyncio.Event) -> int:
-    # ✅ FIX: Check disk space before creating the directory
+
+# =============================================================================
+# 9. REAL-TIME DOWNLOAD ENGINE
+# =============================================================================
+
+async def realtime_download(
+    *,
+    target,
+    uid: int,
+    platform: str,
+    handle: str,
+    mode: str,
+    url: str,
+    cookie: Path,
+    sleep: int,
+    stop: asyncio.Event,
+    status: Status | None = None,
+) -> int:
+    """
+    Streams gallery-dl output: detects fully-written media, sends in batches,
+    deletes them, and stops the moment `stop` is set.
+    """
+    out_dir = (udir(uid) / "downloads" / platform.capitalize()
+               / handle / mode.capitalize())
+    archive = archive_path(uid, platform, handle, mode)
+
+    # BUG-05/11: create download dir; archive lives elsewhere and survives
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        # Errno 28 = No space left on device
-        err_msg = f"❌ Disk full! Run /cleanup or tap 🗑️ Free disk.\n`{e}`"
+    except OSError as exc:
+        msg = f"❌ Disk full. Tap 🗑️ Free disk or send /cleanup.\n`{exc}`"
         try:
             if hasattr(target, "reply_text"):
-                await target.reply_text(err_msg, parse_mode="Markdown")
+                await target.reply_text(msg, parse_mode="Markdown")
             else:
                 bot, cid = target
-                await bot.send_message(chat_id=cid, text=err_msg, parse_mode="Markdown")
+                await bot.send_message(chat_id=cid, text=msg, parse_mode="Markdown")
         except Exception:
             pass
         return 0
 
     if mode == "photos":
-        exts    = PHOTO_EXT
-        send_as = "photos"
+        exts, send_as = PHOTO_EXT, "photos"
     elif mode == "videos":
-        exts    = VIDEO_EXT
-        send_as = "videos"
+        exts, send_as = VIDEO_EXT, "videos"
     elif mode == "documents":
-        exts    = PHOTO_EXT | VIDEO_EXT
-        send_as = "documents"
-    else:  # stories / highlights / mixed
-        exts    = PHOTO_EXT | VIDEO_EXT
-        send_as = "mixed"
+        exts, send_as = PHOTO_EXT | VIDEO_EXT, "documents"
+    else:  # stories / highlights
+        exts, send_as = PHOTO_EXT | VIDEO_EXT, "mixed"
 
-    cmd  = build_cmd(out_dir, cookie, sleep, url, mode)
+    cmd, _ = build_gdl_cmd(
+        out_dir=out_dir, archive=archive, cookie=cookie,
+        sleep=sleep, url=url, mode=mode, platform=platform,
+    )
+
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL)
+        stderr=asyncio.subprocess.DEVNULL,
+    )
 
     seen: set[Path] = set()
-    buf:  list[Path] = []
-    sent = 0
+    buffer: list[Path] = []
+    sent_count = 0
 
-    async def do_flush():
-        nonlocal sent
-        if not buf: return
-        await flush_batch(target, list(buf), send_as)
-        sent += len(buf)
-        buf.clear()
+    async def drain() -> None:
+        nonlocal sent_count
+        if not buffer:
+            return
+        await flush(target, list(buffer), send_as)
+        sent_count += len(buffer)
+        buffer.clear()
 
-    while True:
-        # Check stop FIRST — instant response
-        if stop.is_set():
-            try: proc.kill()
-            except Exception: pass
-            break
-
-        await asyncio.sleep(0.5)
-
-        if out_dir.exists():
-            for f in sorted(out_dir.iterdir()):
-                if f in seen or not f.is_file(): continue
-                if f.suffix.lower() not in exts:  continue
-                # Skip files still being written
-                try:
-                    size1 = f.stat().st_size
-                    await asyncio.sleep(0.2)
-                    size2 = f.stat().st_size
-                    if size1 != size2: continue
-                except Exception:
-                    continue
-
-                seen.add(f)
-                buf.append(f)
-                if len(buf) == 10:
-                    await do_flush()
-
-        if proc.returncode is not None:
-            break
-
-        try:
-            await asyncio.wait_for(asyncio.shield(proc.wait()), timeout=0.1)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            pass
-
-    # Final sweep (only if not stopped)
-    if not stop.is_set() and out_dir.exists():
-        await asyncio.sleep(0.5)
-        for f in sorted(out_dir.iterdir()):
-            if f in seen or not f.is_file(): continue
-            if f.suffix.lower() not in exts:  continue
-            seen.add(f)
-            buf.append(f)
-            if len(buf) == 10:
-                await do_flush()
-
-    await do_flush()
-
-    # ✅ FIX: Remove the now-empty download directory (keep archive.txt gone too)
     try:
-        if out_dir.exists():
-            shutil.rmtree(out_dir, ignore_errors=True)
-    except Exception:
-        pass
+        # BUG-02: simple, honest polling loop — no dead shield/wait_for.
+        while True:
+            if stop.is_set():
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                break
 
-    return sent
+            await asyncio.sleep(0.5)
 
-# ── DOWNLOAD ORCHESTRATOR ─────────────────────────────────────────────────────
+            if out_dir.exists():
+                for f in sorted(out_dir.iterdir()):
+                    if f in seen or not f.is_file():
+                        continue
+                    if f.suffix.lower() not in exts:
+                        continue
+                    # only process files that aren't still being written
+                    try:
+                        s1 = f.stat().st_size
+                        await asyncio.sleep(0.2)
+                        s2 = f.stat().st_size
+                        if s1 != s2:
+                            continue
+                    except Exception:
+                        continue
 
-async def do_download(msg, choice: str, uid: int,
-                      uname: str, name: str, bot, stop: asyncio.Event):
+                    seen.add(f)
+                    buffer.append(f)
+                    if len(buffer) >= MEDIA_GROUP_MAX:
+                        await drain()
+
+            if proc.returncode is not None:
+                break
+
+        # Final sweep after subprocess exited cleanly
+        if not stop.is_set() and out_dir.exists():
+            await asyncio.sleep(0.3)
+            for f in sorted(out_dir.iterdir()):
+                if f in seen or not f.is_file():
+                    continue
+                if f.suffix.lower() not in exts:
+                    continue
+                seen.add(f)
+                buffer.append(f)
+                if len(buffer) >= MEDIA_GROUP_MAX:
+                    await drain()
+
+        await drain()
+
+        if status:
+            await status.set(
+                f"📦 `{handle}` → {sent_count} file(s) on `{mode}`.",
+                force=True,
+            )
+    finally:
+        # Wipe the per-run download dir only. Archive remains persistent.
+        shutil.rmtree(out_dir, ignore_errors=True)
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            try:
+                await proc.wait()
+            except Exception:
+                pass
+
+    return sent_count
+
+
+# =============================================================================
+# 10. HIGH-LEVEL ORCHESTRATORS
+# =============================================================================
+
+def _release(uid: int, ev: asyncio.Event) -> None:
+    """BUG-09: only remove STOP_EVENTS[uid] if it still points to OUR event."""
+    if STOP_EVENTS.get(uid) is ev:
+        STOP_EVENTS.pop(uid, None)
+    ACTIVE_USERS.discard(uid)
+
+
+async def do_download(msg, choice: str, uid: int, uname: str,
+                      name: str, bot, stop: asyncio.Event) -> None:
     mode_map = {"1": "photos", "2": "videos", "3": "both", "4": "documents"}
     mode     = mode_map.get(choice, "photos")
     label    = {"photos": "🖼️ Photos", "videos": "🎬 Videos",
                 "both":   "📦 Both",   "documents": "📁 Files"}[mode]
 
-    channel     = get_channel(uid)
-    send_target = (bot, channel) if channel else msg
+    ch = get_channel(uid)
+    target = (bot, normalize_chat(ch)) if ch else msg
 
-    status = await msg.reply_text(
-        f"⏳ *{label}* — starting…" + (f"\n📡 → {channel}" if channel else ""),
-        parse_mode="Markdown")
+    first = await msg.reply_text(
+        f"⏳ *{label}* — starting…" + (f"\n📡 → {ch}" if ch else ""),
+        parse_mode="Markdown",
+    )
+    status = Status(first)
 
-    total = 0
-    start = datetime.now()
-
-    for platform, (_, cfile, sleep) in PLATFORMS.items():
-        if stop.is_set(): break
-        urls = load_profiles(uid, platform)
-        if not urls: continue
-
-        for url in urls:
-            if stop.is_set(): break
-            user_handle = url.rstrip("/").split("/")[-1].lstrip("@")
-
-            try:
-                await status.edit_text(
-                    f"⏳ *{platform.capitalize()}* › `{user_handle}`",
-                    parse_mode="Markdown")
-            except Exception:
-                pass
-
-            modes = ["photos", "videos"] if mode == "both" else [mode]
-
-            for m in modes:
-                if stop.is_set(): break
-
-                out_dir = (DATA_ROOT / str(uid) / "downloads"
-                           / platform.capitalize() / user_handle / m.capitalize())
-
-                n = await realtime_download(
-                    send_target, out_dir,
-                    cookie_dir(uid) / cfile,
-                    sleep, url, m, stop)
-                total += n
-
-                if n > 0:
-                    save_history(uid, {
-                        "date":     datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        "platform": platform,
-                        "user":     user_handle,
-                        "media":    m,
-                        "sent":     n,
-                    })
-
-    elapsed = int((datetime.now() - start).total_seconds())
-    final   = (f"⏹️ *Stopped.* {total} file(s) in {elapsed}s."
-               if stop.is_set() else
-               f"✅ *Done!* {total} file(s) in {elapsed}s.")
-    try:
-        await status.edit_text(final, parse_mode="Markdown")
-    except Exception:
-        await msg.reply_text(final, parse_mode="Markdown")
-
-    STOP_EVENTS.pop(uid, None)
-    await show_menu(msg, uid, uname, name)
-
-# ── SPECIAL DOWNLOAD (stories / highlights) ───────────────────────────────────
-
-async def do_special_download(msg, url: str, platform: str,
-                              mode: str, uid: int, uname: str,
-                              name: str, bot, stop: asyncio.Event):
-    label       = "📖 Stories" if mode == "stories" else "🌟 Highlights"
-    channel     = get_channel(uid)
-    send_target = (bot, channel) if channel else msg
-    user_handle = url.rstrip("/").split("/")[-1].lstrip("@")
-
-    status = await msg.reply_text(
-        f"⏳ *{label}* › `{user_handle}`…", parse_mode="Markdown")
-
-    _, cfile, sleep = PLATFORMS[platform]
-    out_dir = (DATA_ROOT / str(uid) / "downloads"
-               / platform.capitalize() / user_handle / mode.capitalize())
-
-    n = await realtime_download(
-        send_target, out_dir,
-        cookie_dir(uid) / cfile,
-        sleep, url, mode, stop)
-
-    if n > 0:
-        save_history(uid, {
-            "date":     datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "platform": platform,
-            "user":     user_handle,
-            "media":    mode,
-            "sent":     n,
-        })
+    started = datetime.now()
+    total   = 0
 
     try:
-        await status.edit_text(
-            f"✅ *Done!* {n} file(s) sent.", parse_mode="Markdown")
-    except Exception:
-        pass
+        for platform, (_, cookie_name, sleep) in PLATFORMS.items():
+            if stop.is_set():
+                break
+            urls = read_profiles(uid, platform)
+            if not urls:
+                continue
 
-    STOP_EVENTS.pop(uid, None)
-    await show_menu(msg, uid, uname, name)
+            cookie = cdir(uid) / cookie_name
 
-# ── MAIN ──────────────────────────────────────────────────────────────────────
+            for url in urls:
+                if stop.is_set():
+                    break
+                handle = handle_from_url(url)
 
-def main():
-    DATA_ROOT.mkdir(parents=True, exist_ok=True)
-    COOKIES_ROOT.mkdir(parents=True, exist_ok=True)
+                await status.set(f"⏳ *{platform.capitalize()}* › `{handle}`")
 
-    app = Application.builder().token(TOKEN).build()
+                modes = ("photos", "videos") if mode == "both" else (mode,)
+                for m in modes:
+                    if stop.is_set():
+                        break
+                    n = await realtime_download(
+                        target=target, uid=uid, platform=platform,
+                        handle=handle, mode=m, url=url, cookie=cookie,
+                        sleep=sleep, stop=stop, status=status,
+                    )
+                    total += n
+                    if n > 0:
+                        append_history(uid, {
+                            "date":     datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            "platform": platform,
+                            "user":     handle,
+                            "media":    m,
+                            "sent":     n,
+                        })
 
-    app.add_handler(CommandHandler("start",   cmd_start))
-    app.add_handler(CommandHandler("menu",    cmd_start))
-    app.add_handler(CommandHandler("cleanup", cmd_cleanup))
-    app.add_handler(CallbackQueryHandler(cb_router))
-    app.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+        elapsed = int((datetime.now() - started).total_seconds())
+        final = (f"⏹️ *Stopped.* {total} file(s) in {elapsed}s."
+                 if stop.is_set() else
+                 f"✅ *Done!* {total} file(s) in {elapsed}s.")
+        await status.set(final, force=True)
+    finally:
+        _release(uid, stop)
+        await send_menu(msg, uid, uname, name)
 
-    print("Cuhi Bot running…")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-if __name__ == "__main__":
-    main()
+async def do_special_download(msg, url: str, platform: str, mode: str,
+                              uid: int, uname: str, name: str, bot,
+                              stop: asyncio.Event) -> None:
+    label = "📖 Stories" if mode == "stories" else "🌟 Highlights"
+    ch    = get_channel(uid)
+    target = (bot, normalize_chat(ch)) if ch else msg
+    handle = handle_from_url(url)
+
+    first = await msg.reply_text(
+        f"⏳ *{label}* › `{handle}`…", parse_mode="Markdown"
+    )
+    status = Status(first)
+
+    _, cookie_name, sleep = PLATFORMS[platform]
+    cookie = cdir(uid) / cookie_name
+
+    try:
+        n = await realtime_download(
+            target=target, uid=uid, platform=platform, handle=handle,
+            mode=mode, url=url, cookie=cookie, sleep=sleep,
+            stop=stop, status=status,
+        )
+        if n > 0:
+            append_history(uid, {
+                "date":     datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "platform": platform,
+                "user":     handle,
+                "media":    mode,
+                "sent":     n,
+            })
+        await status.set(f"✅ *Done!* {n} file(s) sent.", force=True)
+    finally:
+        _release(uid, stop)
+        await send_menu(msg, uid, uname, name)
+
+
+def start_download_task(uid: int, coro
