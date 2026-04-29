@@ -30,10 +30,10 @@ COOKIES_ROOT = Path("./cookies")
 GLOBAL_COOKIES_DIR = COOKIES_ROOT / "global"
 
 PLATFORMS = {
-    "instagram": ("instagram_profiles.txt", "instagram.com_cookies.txt", 3),
-    "tiktok":    ("tiktok_profiles.txt",    "tiktok.com_cookies.txt",    2),
-    "facebook":  ("facebook_profiles.txt",  "facebook.com_cookies.txt",  3),
-    "x":         ("x_profiles.txt",         "x.com_cookies.txt",         3),
+    "instagram": ("instagram_profiles.txt", "instagram.com_cookies.txt", 1),
+    "tiktok":    ("tiktok_profiles.txt",    "tiktok.com_cookies.txt",    1),
+    "facebook":  ("facebook_profiles.txt",  "facebook.com_cookies.txt",  1),
+    "x":         ("x_profiles.txt",         "x.com_cookies.txt",         1),
 }
 
 # Maps platform → Railway env var name
@@ -578,7 +578,8 @@ def build_cmd(out_dir: Path, cookie: Path, sleep: int,
     cmd = ["gallery-dl",
            "-D", str(out_dir),
            "--download-archive", str(out_dir / "archive.txt"),
-           "--sleep-request", str(sleep)]
+           "--sleep-request", str(sleep),
+           "--http-timeout", "30"]
     if mode == "photos":
         cmd += ["--filter",
                 "extension in ('jpg','jpeg','png','gif','webp','bmp')"]
@@ -705,7 +706,7 @@ async def realtime_download(target, out_dir: Path, cookie: Path,
             except Exception: pass
             break
 
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.2)
 
         if out_dir.exists():
             for f in sorted(out_dir.iterdir()):
@@ -713,7 +714,7 @@ async def realtime_download(target, out_dir: Path, cookie: Path,
                 if f.suffix.lower() not in exts:  continue
                 try:
                     size1 = f.stat().st_size
-                    await asyncio.sleep(0.2)
+                    await asyncio.sleep(0.1)
                     size2 = f.stat().st_size
                     if size1 != size2: continue
                 except Exception:
@@ -732,7 +733,7 @@ async def realtime_download(target, out_dir: Path, cookie: Path,
             pass
 
     if not stop.is_set() and out_dir.exists():
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.2)
         for f in sorted(out_dir.iterdir()):
             if f in seen or not f.is_file(): continue
             if f.suffix.lower() not in exts:  continue
