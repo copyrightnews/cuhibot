@@ -6,6 +6,7 @@ Cuhi Bot — Media Downloader
 - Per-user isolated data
 - Albums, real-time, stories, highlights
 - Global cookies loaded from Railway env vars at startup
+- Real-time per-file delivery (no batching)
 """
 
 import asyncio, json, os
@@ -388,7 +389,6 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "m_cookies":
-        # Show which cookies are currently active (global or user-uploaded)
         status_lines = []
         for p in PLATFORMS:
             cfile = PLATFORMS[p][1]
@@ -622,13 +622,6 @@ def build_cmd(out_dir: Path, cookie: Path, sleep: int,
 def classify(f: Path) -> str:
     return "photo" if f.suffix.lower() in PHOTO_EXT else "video"
 
-async def _send_group(target, group: list):
-    if hasattr(target, "reply_media_group"):
-        await safe_api(target.reply_media_group, group)
-    else:
-        bot, cid = target
-        await safe_api(bot.send_media_group, chat_id=cid, media=group)
-
 async def _send_single(target, f: Path, kind: str):
     try:
         if kind == "photo":
@@ -652,44 +645,13 @@ async def _send_single(target, f: Path, kind: str):
     except Exception:
         pass
 
-async def flush_batch(target, batch: list[Path], send_as: str):
-    if not batch:
-        return
-    if send_as == "documents":
-        for f in batch:
-            await _send_single(target, f, "doc")
-        return
-    if len(batch) == 1:
-        f    = batch[0]
-        kind = "photo" if send_as == "photos" else \
-               "video" if send_as == "videos" else classify(f)
-        await _send_single(target, f, kind)
-        return
-    try:
-        if send_as == "photos":
-            group = [InputMediaPhoto(open(f, "rb")) for f in batch]
-        elif send_as == "videos":
-            group = [InputMediaVideo(open(f, "rb")) for f in batch]
-        else:
-            group = []
-            for f in batch:
-                if classify(f) == "photo":
-                    group.append(InputMediaPhoto(open(f, "rb")))
-                else:
-                    group.append(InputMediaVideo(open(f, "rb")))
-        await _send_group(target, group)
-    except Exception:
-        for f in batch:
-            kind = "photo" if send_as == "photos" else \
-                   "video" if send_as == "videos" else classify(f)
-            await _send_single(target, f, kind)
-
 # ── REALTIME DOWNLOAD ─────────────────────────────────────────────────────────
 
 async def realtime_download(target, out_dir: Path, cookie: Path,
                             sleep: int, url: str, mode: str,
                             stop: asyncio.Event) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
+
     if mode == "photos":
         exts    = PHOTO_EXT
         send_as = "photos"
@@ -710,15 +672,20 @@ async def realtime_download(target, out_dir: Path, cookie: Path,
         stderr=asyncio.subprocess.DEVNULL)
 
     seen: set[Path] = set()
-    buf:  list[Path] = []
     sent = 0
 
-    async def do_flush():
+    async def send_file(f: Path):
         nonlocal sent
-        if not buf: return
-        await flush_batch(target, list(buf), send_as)
-        sent += len(buf)
-        buf.clear()
+        if send_as == "documents":
+            kind = "doc"
+        elif send_as == "photos":
+            kind = "photo"
+        elif send_as == "videos":
+            kind = "video"
+        else:
+            kind = classify(f)
+        await _send_single(target, f, kind)
+        sent += 1
 
     while True:
         if stop.is_set():
@@ -732,17 +699,16 @@ async def realtime_download(target, out_dir: Path, cookie: Path,
             for f in sorted(out_dir.iterdir()):
                 if f in seen or not f.is_file(): continue
                 if f.suffix.lower() not in exts:  continue
+                # Stability check — skip if file is still being written
                 try:
                     size1 = f.stat().st_size
                     await asyncio.sleep(0.1)
                     size2 = f.stat().st_size
-                    if size1 != size2: continue
+                    if size1 != size2 or size1 == 0: continue
                 except Exception:
                     continue
                 seen.add(f)
-                buf.append(f)
-                if len(buf) == 10:
-                    await do_flush()
+                await send_file(f)   # ← send immediately, no buffering
 
         if proc.returncode is not None:
             break
@@ -752,17 +718,15 @@ async def realtime_download(target, out_dir: Path, cookie: Path,
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
 
+    # Final sweep for any files missed during the loop
     if not stop.is_set() and out_dir.exists():
         await asyncio.sleep(0.2)
         for f in sorted(out_dir.iterdir()):
             if f in seen or not f.is_file(): continue
             if f.suffix.lower() not in exts:  continue
             seen.add(f)
-            buf.append(f)
-            if len(buf) == 10:
-                await do_flush()
+            await send_file(f)
 
-    await do_flush()
     return sent
 
 # ── DOWNLOAD ORCHESTRATOR ─────────────────────────────────────────────────────
@@ -787,7 +751,6 @@ async def do_download(msg, choice: str, uid: int,
         urls = load_profiles(uid, platform)
         if not urls: continue
 
-        # ← use get_cookie_path to prefer user cookie, fall back to global
         cookie = get_cookie_path(uid, cfile)
 
         for url in urls:
@@ -838,7 +801,6 @@ async def do_special_download(msg, url: str, platform: str,
         f"⏳ *{label}* › `{user_handle}`…", parse_mode="Markdown")
 
     _, cfile, sleep = PLATFORMS[platform]
-    # ← use get_cookie_path to prefer user cookie, fall back to global
     cookie = get_cookie_path(uid, cfile)
 
     out_dir = (DATA_ROOT / str(uid) / "downloads"
@@ -866,7 +828,6 @@ def main():
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
     COOKIES_ROOT.mkdir(parents=True, exist_ok=True)
 
-    # ← Load cookies from Railway env vars before anything else
     load_cookies_from_env()
 
     app = Application.builder().token(TOKEN).build()
