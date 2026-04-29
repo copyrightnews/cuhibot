@@ -152,12 +152,12 @@ def menu_text(uid, username, name):
 def main_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Add source",      callback_data="m_add"),
-         InlineKeyboardButton("🗑️ Remove source",  callback_data="m_remove")],
-        [InlineKeyboardButton("📋 My sources",      callback_data="m_list"),
-         InlineKeyboardButton("🚀 Run download",    callback_data="m_run")],
+         InlineKeyboardButton("🚫 Remove source",  callback_data="m_remove")],
+        [InlineKeyboardButton("🌐 My sources",      callback_data="m_list"),
+         InlineKeyboardButton("✅ Run download",    callback_data="m_run")],
         [InlineKeyboardButton("📖 Stories",         callback_data="m_stories"),
-         InlineKeyboardButton("🌟 Highlights",      callback_data="m_highlights")],
-        [InlineKeyboardButton("⏹️ Stop",            callback_data="m_stop"),
+         InlineKeyboardButton("✨ Highlights",      callback_data="m_highlights")],
+        [InlineKeyboardButton("🚫 Stop download",   callback_data="m_stop"),
          InlineKeyboardButton("📜 History",         callback_data="m_history")],
         [InlineKeyboardButton("🍪 Set cookies",     callback_data="m_cookies"),
          InlineKeyboardButton("📊 Status",          callback_data="m_status")],
@@ -177,7 +177,7 @@ def media_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🖼️ Photos only",       callback_data="dl_1")],
         [InlineKeyboardButton("🎬 Videos only",       callback_data="dl_2")],
-        [InlineKeyboardButton("📦 Both (separately)", callback_data="dl_3")],
+        [InlineKeyboardButton("🔖 Both (separately)", callback_data="dl_3")],
         [InlineKeyboardButton("📁 Files (as docs)",   callback_data="dl_4")],
         [InlineKeyboardButton("🔙 Back",              callback_data="m_back")],
     ])
