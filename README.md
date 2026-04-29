@@ -12,14 +12,17 @@
   <a href="#deployment">Deployment</a> •
   <a href="#environment-variables">Configuration</a> •
   <a href="#commands">Commands</a> •
+  <a href="CHANGELOG.md">Changelog</a> •
   <a href="#license">License</a>
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/version-1.1.0-brightgreen?style=flat-square" alt="Version" />
   <img src="https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
   <img src="https://img.shields.io/badge/telegram--bot-22.1-26A5E4?style=flat-square&logo=telegram&logoColor=white" alt="python-telegram-bot" />
   <img src="https://img.shields.io/badge/gallery--dl-1.32-orange?style=flat-square" alt="gallery-dl" />
   <img src="https://img.shields.io/badge/deploy-Railway-0B0D0E?style=flat-square&logo=railway&logoColor=white" alt="Railway" />
+  <img src="https://img.shields.io/badge/bugs_fixed-31-red?style=flat-square" alt="Bugs Fixed" />
   <img src="https://img.shields.io/github/license/naimurnstu/x?style=flat-square" alt="License" />
 </p>
 
