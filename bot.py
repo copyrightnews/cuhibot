@@ -232,7 +232,13 @@ def archive_path(uid: int, platform: str, handle: str, mode: str) -> Path:
 def folder_mb(path: Path) -> float:
     if not path.exists():
         return 0.0
-    total = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    total = 0
+    for f in path.rglob("*"):
+        if f.is_file():
+            try:
+                total += f.stat().st_size
+            except OSError:
+                pass
     return round(total / (1024 * 1024), 2)
 
 
@@ -360,8 +366,10 @@ def validate_url(url: str, platform: str) -> tuple[bool, str]:
         return False, f"URL too long (max {MAX_URL_LENGTH} characters)."
     if not _URL_RE.match(url):
         return False, "Not a valid URL (must start with http:// or https://)."
-    # Block obvious injection attempts (semicolons, backticks, pipes)
-    if any(ch in url for ch in (';', '`', '|', '$', '&&')):
+    # Block newlines (HTTP header injection) and shell metacharacters
+    if '\n' in url or '\r' in url:
+        return False, "URL contains invalid characters."
+    if any(pat in url for pat in (';', '`', '|', '$', '&&')):
         return False, "URL contains invalid characters."
     allowed = PLATFORM_DOMAINS[platform]
     if not any(dom in url.lower() for dom in allowed):
@@ -683,20 +691,32 @@ def _split_mixed(batch: list[Path]) -> list[list[Path]]:
     return chunks
 
 
-async def flush(target, batch: list[Path], send_as: str) -> None:
-    """Send the buffered batch, then delete local files (disk-full prevention)."""
+async def flush(target, batch: list[Path], send_as: str) -> int:
+    """Send the buffered batch, delete successfully-sent files.
+
+    Returns the number of files that were actually sent.
+    Files that fail to send are kept on disk so they can be retried
+    (the download archive won't re-download them, but the file remains).
+    """
     if not batch:
-        return
+        return 0
+
+    sent = 0
+    sent_files: list[Path] = []  # track which files were actually delivered
 
     try:
         if send_as == "documents":
             for f in batch:
-                await _send_one(target, f, "document")
+                if await _send_one(target, f, "document"):
+                    sent += 1
+                    sent_files.append(f)
 
         elif len(batch) == 1:
             f = batch[0]
             kind = {"photos": "photo", "videos": "video"}.get(send_as) or file_kind(f)
-            await _send_one(target, f, kind)
+            if await _send_one(target, f, kind):
+                sent += 1
+                sent_files.append(f)
 
         else:
             for chunk in _split_mixed(batch):
@@ -712,10 +732,13 @@ async def flush(target, batch: list[Path], send_as: str) -> None:
                     )
                     for f in chunk:
                         kind = {"photos": "photo", "videos": "video"}.get(send_as) or file_kind(f)
-                        await _send_one(target, f, kind)
+                        if await _send_one(target, f, kind):
+                            sent += 1
+                            sent_files.append(f)
                     continue
 
                 file_handles: list = []
+                group_ok = False
                 try:
                     handles = []
                     if send_as == "photos":
@@ -740,6 +763,9 @@ async def flush(target, batch: list[Path], send_as: str) -> None:
                                 handles.append(InputMediaVideo(fh))
                         group = handles
                     await _send_group(target, group)
+                    group_ok = True
+                    sent += len(chunk)
+                    sent_files.extend(chunk)
                 except Exception:
                     # Close group handles BEFORE falling back to one-by-one
                     for fh in file_handles:
@@ -750,7 +776,9 @@ async def flush(target, batch: list[Path], send_as: str) -> None:
                     file_handles.clear()
                     for f in chunk:
                         kind = {"photos": "photo", "videos": "video"}.get(send_as) or file_kind(f)
-                        await _send_one(target, f, kind)
+                        if await _send_one(target, f, kind):
+                            sent += 1
+                            sent_files.append(f)
                 finally:
                     # Close any remaining open handles from the group attempt
                     for fh in file_handles:
@@ -759,11 +787,14 @@ async def flush(target, batch: list[Path], send_as: str) -> None:
                         except Exception:
                             pass
     finally:
-        for f in batch:
+        # Only delete files that were actually sent successfully
+        for f in sent_files:
             try:
                 f.unlink(missing_ok=True)
             except Exception:
                 pass
+
+    return sent
 
 
 # =============================================================================
@@ -836,10 +867,9 @@ async def realtime_download(
             return
         batch = list(buffer)
         buffer.clear()
-        # flush() deletes each file after sending; sent_count is
-        # incremented only for files that actually existed when we flushed
-        await flush(target, batch, send_as)
-        sent_count += len(batch)
+        # flush() returns the count of files actually sent successfully
+        n = await flush(target, batch, send_as)
+        sent_count += n
 
     try:
         # BUG-02: polling loop with proper subprocess exit detection.
@@ -1264,7 +1294,14 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text(f"❌ {err}")
             await send_menu(update.message, uid, uname, name)
             return
-
+        if uid in ACTIVE_USERS:
+            await update.message.reply_text("⚠️ A download is already running. Tap 🚫 Stop first.")
+            return
+        allowed, remaining = _check_rate_limit(uid)
+        if not allowed:
+            await update.message.reply_text(f"⏳ Please wait {remaining}s before starting another download.")
+            return
+        _record_download_time(uid)
         start_download_task(
             uid,
             do_special_download,
@@ -1286,7 +1323,14 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text(f"❌ {err}")
             await send_menu(update.message, uid, uname, name)
             return
-
+        if uid in ACTIVE_USERS:
+            await update.message.reply_text("⚠️ A download is already running. Tap 🚫 Stop first.")
+            return
+        allowed, remaining = _check_rate_limit(uid)
+        if not allowed:
+            await update.message.reply_text(f"⏳ Please wait {remaining}s before starting another download.")
+            return
+        _record_download_time(uid)
         start_download_task(
             uid,
             do_special_download,
@@ -1600,9 +1644,9 @@ def bootstrap_env_cookies() -> None:
             content = value   # treat as plain Netscape text
         try:
             dest.write_text(content, encoding="utf-8")
-            print(f"[bootstrap] Wrote {cookie_filename} from env {env_key}")
+            logger.info("Wrote %s from env %s", cookie_filename, env_key)
         except Exception as exc:
-            print(f"[bootstrap] Failed to write {cookie_filename}: {exc}")
+            logger.error("Failed to write %s: %s", cookie_filename, exc)
 
 
 async def cmd_admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1640,9 +1684,17 @@ def main() -> None:
     if ADMIN_IDS:
         logger.info("Security: %d admin(s) configured", len(ADMIN_IDS))
 
+    from telegram.request import HTTPXRequest
+    request = HTTPXRequest(
+        connect_timeout=15.0,
+        read_timeout=30.0,
+        write_timeout=60.0,      # large video uploads need time
+        pool_timeout=10.0,
+    )
     app = (
         Application.builder()
         .token(TOKEN)
+        .request(request)
         .build()
     )
 
