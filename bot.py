@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import os
 import re
 import shutil
@@ -36,6 +37,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
+
+logger = logging.getLogger(__name__)
 
 from telegram import (
     InlineKeyboardButton,
@@ -113,30 +116,45 @@ ACTIVE_USERS: set[int]                = set()   # BUG-10
 
 @contextmanager
 def locked_file(target: Path):
-    """Advisory file lock (cross-platform). BUG-08."""
+    """Advisory file lock (cross-platform). BUG-08.
+
+    Uses os.open with O_CREAT|O_EXCL for atomic lock creation.
+    Retries up to 20 times (2 seconds total), then raises instead
+    of silently proceeding without the lock.
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
     lock_path = target.with_suffix(target.suffix + ".lock")
-    try:
-        # Try to create lock file exclusively
-        lock_path.touch(exist_ok=False)
-        yield
-    except FileExistsError:
-        # Lock file already exists, wait and retry
-        import time
-        for _ in range(10):  # Retry up to 10 times
-            time.sleep(0.1)
+    fd = None
+    max_retries = 20
+    for attempt in range(max_retries):
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            # Check for stale locks (older than 30 seconds)
             try:
-                lock_path.touch(exist_ok=False)
-                yield
-                return
-            except FileExistsError:
-                continue
-        # If we get here, we couldn't acquire the lock, but proceed anyway
+                age = time.time() - lock_path.stat().st_mtime
+                if age > 30:
+                    lock_path.unlink(missing_ok=True)
+                    continue
+            except OSError:
+                pass
+            if attempt == max_retries - 1:
+                raise TimeoutError(
+                    f"Could not acquire lock on {target} after {max_retries} retries"
+                )
+            time.sleep(0.1)
+    try:
         yield
     finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         try:
             lock_path.unlink(missing_ok=True)
-        except Exception:
+        except OSError:
             pass
 
 
@@ -308,22 +326,24 @@ def validate_url(url: str, platform: str) -> tuple[bool, str]:
     return True, ""
 
 
-def normalize_chat(value: str):
-    """BUG-03: convert user-entered channel strings into valid Telegram chat IDs."""
-    v = value.strip()
+def normalize_chat(value) -> int | str:
+    """BUG-03: convert user-entered channel strings into valid Telegram chat IDs.
+
+    Returns @username strings as-is, or numeric IDs as int.
+    Positive numbers get the -100 supergroup/channel prefix.
+    Already-negative numbers are kept as-is.
+    """
+    if isinstance(value, int):
+        return value
+    v = str(value).strip()
     if v.startswith("@"):
         return v
     if v.lstrip("-").isdigit():
         n = int(v)
-        # Already negative: keep as-is
         if n < 0:
             return n
-        # Positive number: add -100 prefix for supergroups/channels
-        # unless it already looks like a 100-prefixed ID (100XXXXXXXXX = 12 digits)
-        if len(str(n)) == 12 and str(n).startswith("100"):
-            return -n  # Already has 100, just make negative
+        # Always prepend -100 for positive numeric IDs
         return int(f"-100{n}")
-    # If input doesn't match any pattern, return as-is
     return v
 
 
@@ -339,9 +359,12 @@ def stories_url_for(platform: str, url: str) -> str:
 
 
 def highlights_url_for(platform: str, url: str) -> str:
-    """BUG-14: use gallery-dl's real highlights endpoint instead of a no-op."""
+    """BUG-14: use gallery-dl's real highlights endpoint.
+
+    gallery-dl expects /{username}/highlights/ (not /stories/highlights/{username}/).
+    """
     if platform == "instagram":
-        return f"https://www.instagram.com/stories/highlights/{handle_from_url(url)}/"
+        return f"https://www.instagram.com/{handle_from_url(url)}/highlights/"
     return url
 
 
@@ -387,13 +410,22 @@ def kb_media() -> InlineKeyboardMarkup:
     ])
 
 
+def _escape_md(text: str) -> str:
+    """Escape Markdown special characters in user-supplied strings."""
+    for ch in ('*', '_', '`', '[', ']', '~'):
+        text = text.replace(ch, f'\\{ch}')
+    return text
+
+
 def render_menu(uid: int, username: str, name: str) -> str:
+    safe_username = _escape_md(username)
+    safe_name = _escape_md(name)
     ch = get_channel(uid)
     ch_line   = f"\n📡 Output: *{ch}*" if ch else ""
     cached = folder_mb(udir(uid) / "downloads")
     disk_line = f"\n💾 Cached: *{cached} MB*"
     return (
-        f"@{username}, {name}\n"
+        f"@{safe_username}, {safe_name}\n"
         f"👤 ID: `{uid}`\n"
         f"🤍 Free account\n"
         f"✅ Downloaded Media: *{total_sent(uid)}*\n\n"
@@ -421,7 +453,7 @@ async def send_menu(msg, uid: int, username: str, name: str, *, edit=False) -> N
         else:
             await msg.reply_text(text, reply_markup=kb_main(), parse_mode="Markdown")
     except Exception:
-        pass
+        logger.exception("send_menu failed for uid=%s", uid)
 
 
 # =============================================================================
@@ -519,7 +551,8 @@ async def _send_group(target, group: list) -> None:
         await bot.send_media_group(chat_id=cid, media=group)
 
 
-async def _send_one(target, f: Path, kind: str) -> None:
+async def _send_one(target, f: Path, kind: str) -> bool:
+    """Send a single file. Returns True on success, False on failure."""
     try:
         with open(f, "rb") as fh:
             if kind == "photo":
@@ -540,8 +573,13 @@ async def _send_one(target, f: Path, kind: str) -> None:
                 else:
                     bot, cid = target
                     await bot.send_document(chat_id=cid, document=fh)
+        return True
+    except RetryAfter as exc:
+        await asyncio.sleep(exc.retry_after + 0.5)
+        return await _send_one(target, f, kind)  # retry once
     except Exception:
-        pass
+        logger.warning("Failed to send %s as %s", f.name, kind, exc_info=True)
+        return False
 
 
 def _split_mixed(batch: list[Path]) -> list[list[Path]]:
@@ -563,7 +601,6 @@ async def flush(target, batch: list[Path], send_as: str) -> None:
     if not batch:
         return
 
-    file_handles = []
     try:
         if send_as == "documents":
             for f in batch:
@@ -576,6 +613,7 @@ async def flush(target, batch: list[Path], send_as: str) -> None:
 
         else:
             for chunk in _split_mixed(batch):
+                file_handles: list = []
                 try:
                     handles = []
                     if send_as == "photos":
@@ -601,15 +639,24 @@ async def flush(target, batch: list[Path], send_as: str) -> None:
                         group = handles
                     await _send_group(target, group)
                 except Exception:
+                    # Close group handles BEFORE falling back to one-by-one
+                    for fh in file_handles:
+                        try:
+                            fh.close()
+                        except Exception:
+                            pass
+                    file_handles.clear()
                     for f in chunk:
                         kind = {"photos": "photo", "videos": "video"}.get(send_as) or file_kind(f)
                         await _send_one(target, f, kind)
+                finally:
+                    # Close any remaining open handles from the group attempt
+                    for fh in file_handles:
+                        try:
+                            fh.close()
+                        except Exception:
+                            pass
     finally:
-        for fh in file_handles:
-            try:
-                fh.close()
-            except Exception:
-                pass
         for f in batch:
             try:
                 f.unlink(missing_ok=True)
@@ -690,7 +737,7 @@ async def realtime_download(
         buffer.clear()
 
     try:
-        # BUG-02: simple, honest polling loop — no dead shield/wait_for.
+        # BUG-02: polling loop with proper subprocess exit detection.
         while True:
             if stop.is_set():
                 try:
@@ -699,7 +746,12 @@ async def realtime_download(
                     pass
                 break
 
-            await asyncio.sleep(0.5)
+            # Check if process has exited (non-blocking)
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=0.5)
+                # Process exited — fall through to break below
+            except asyncio.TimeoutError:
+                pass  # still running, continue polling
 
             if out_dir.exists():
                 for f in sorted(out_dir.iterdir()):
@@ -780,7 +832,8 @@ async def do_download(msg, choice: str, uid: int, uname: str,
                 "both":   "📦 Both",   "documents": "📁 Files"}[mode]
 
     ch = get_channel(uid)
-    target = (bot, normalize_chat(ch)) if ch else msg
+    # ch is already normalized at save time — don't re-normalize
+    target = (bot, ch) if ch else msg
 
     first = await msg.reply_text(
         f"⏳ *{label}* — starting…" + (f"\n📡 → {ch}" if ch else ""),
@@ -842,7 +895,8 @@ async def do_special_download(msg, url: str, platform: str, mode: str,
                               stop: asyncio.Event) -> None:
     label = "📖 Stories" if mode == "stories" else "🌟 Highlights"
     ch    = get_channel(uid)
-    target = (bot, normalize_chat(ch)) if ch else msg
+    # ch is already normalized at save time — don't re-normalize
+    target = (bot, ch) if ch else msg
     handle = handle_from_url(url)
 
     first = await msg.reply_text(
@@ -1124,9 +1178,19 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     if data.startswith("del_"):
-        parts    = data.split("_", 2)
+        parts = data.split("_", 2)
+        if len(parts) < 3:
+            await send_menu(q.message, uid, uname, name)
+            return
         platform = parts[1]
-        idx      = int(parts[2])
+        if platform not in PLATFORMS:
+            await send_menu(q.message, uid, uname, name)
+            return
+        try:
+            idx = int(parts[2])
+        except (ValueError, IndexError):
+            await send_menu(q.message, uid, uname, name)
+            return
         urls = read_profiles(uid, platform)
         if 0 <= idx < len(urls):
             removed = urls.pop(idx)
@@ -1309,10 +1373,15 @@ def bootstrap_env_cookies() -> None:
         dest = dest_dir / cookie_filename
         if dest.exists():
             continue          # don't overwrite a manually uploaded file
-        # Detect base64: no newlines and only base64 chars
+        # Detect base64: use strict validation to avoid false positives
         try:
-            decoded = base64.b64decode(value).decode("utf-8")
-            content = decoded
+            decoded = base64.b64decode(value, validate=True).decode("utf-8")
+            # Heuristic: valid cookie files have tab-separated fields or
+            # start with the Netscape header comment
+            if "\t" in decoded or decoded.lstrip().startswith("#"):
+                content = decoded
+            else:
+                content = value  # decoded but doesn't look like cookies
         except Exception:
             content = value   # treat as plain Netscape text
         try:
