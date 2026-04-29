@@ -25,6 +25,7 @@ Layout:
 from __future__ import annotations
 
 import asyncio
+import base64
 import fcntl
 import json
 import os
@@ -65,6 +66,16 @@ PLATFORMS: dict[str, tuple[str, str, int]] = {
     "tiktok":    ("tiktok_profiles.txt",    "tiktok.com_cookies.txt",    2),
     "facebook":  ("facebook_profiles.txt",  "facebook.com_cookies.txt",  3),
     "x":         ("x_profiles.txt",         "x.com_cookies.txt",         3),
+}
+
+# Maps env-var names → platform cookie filenames
+# These are the COOKIE_* variables you set in Railway.
+# Values can be raw Netscape cookie text or base64-encoded cookie text.
+COOKIE_ENV_MAP: dict[str, str] = {
+    "COOKIE_INSTAGRAM": "instagram.com_cookies.txt",
+    "COOKIE_TIKTOK":    "tiktok.com_cookies.txt",
+    "COOKIE_FACEBOOK":  "facebook.com_cookies.txt",
+    "COOKIE_X":         "x.com_cookies.txt",
 }
 
 PLATFORM_DOMAINS: dict[str, tuple[str, ...]] = {
@@ -126,6 +137,13 @@ def cdir(uid: int) -> Path:
     return p
 
 
+def global_cookie_dir() -> Path:
+    """Shared cookie dir written from env vars at startup (not per-user)."""
+    p = COOKIES_ROOT / "_global"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
 def profiles_path(uid: int, platform: str) -> Path:
     return udir(uid) / PLATFORMS[platform][0]
 
@@ -157,6 +175,22 @@ def wipe_downloads(uid: int) -> float:
     freed = folder_mb(root)
     shutil.rmtree(root, ignore_errors=True)
     return freed
+
+
+def resolve_cookie(uid: int, platform: str) -> Path:
+    """
+    Return the best available cookie file for this user+platform.
+    Priority: per-user upload → global env-var cookie → missing (gallery-dl
+    will run without cookies).
+    """
+    _, cookie_name, _ = PLATFORMS[platform]
+    user_cookie   = cdir(uid) / cookie_name
+    global_cookie = global_cookie_dir() / cookie_name
+    if user_cookie.exists():
+        return user_cookie
+    if global_cookie.exists():
+        return global_cookie
+    return user_cookie   # doesn't exist; caller checks .exists()
 
 
 # =============================================================================
@@ -228,7 +262,13 @@ def total_profiles(uid: int) -> int:              # BUG-16
 
 
 def cookie_summary(uid: int) -> str:
-    ok = [p for p in PLATFORMS if (cdir(uid) / PLATFORMS[p][1]).exists()]
+    ok = []
+    for p in PLATFORMS:
+        _, cookie_name, _ = PLATFORMS[p]
+        user_c   = cdir(uid) / cookie_name
+        global_c = global_cookie_dir() / cookie_name
+        if user_c.exists() or global_c.exists():
+            ok.append(p)
     return ", ".join(ok) if ok else "none"
 
 
@@ -719,7 +759,7 @@ async def do_download(msg, choice: str, uid: int, uname: str,
             if not urls:
                 continue
 
-            cookie = cdir(uid) / cookie_name
+            cookie = resolve_cookie(uid, platform)
 
             for url in urls:
                 if stop.is_set():
@@ -770,8 +810,8 @@ async def do_special_download(msg, url: str, platform: str, mode: str,
     )
     status = Status(first)
 
-    _, cookie_name, sleep = PLATFORMS[platform]
-    cookie = cdir(uid) / cookie_name
+    cookie = resolve_cookie(uid, platform)
+    _, _, sleep = PLATFORMS[platform]
 
     try:
         n = await realtime_download(
@@ -793,4 +833,478 @@ async def do_special_download(msg, url: str, platform: str, mode: str,
         await send_menu(msg, uid, uname, name)
 
 
-def start_download_task(uid: int, coro
+def start_download_task(uid: int, coro) -> None:
+    """
+    Register a fresh stop-event for `uid`, then fire the coroutine as a task.
+    BUG-09/10: signals any pre-existing run to quit before starting a new one.
+    """
+    old = STOP_EVENTS.get(uid)
+    if old:
+        old.set()
+
+    ev = asyncio.Event()
+    STOP_EVENTS[uid] = ev
+    ACTIVE_USERS.add(uid)
+    asyncio.ensure_future(coro)
+
+
+# =============================================================================
+# 11. TELEGRAM HANDLERS
+# =============================================================================
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def _user(update: Update) -> tuple[int, str, str]:
+    u = update.effective_user
+    return u.id, u.username or "unknown", u.first_name or "User"
+
+
+async def _answer(q) -> None:
+    try:
+        await q.answer()
+    except Exception:
+        pass
+
+
+# ── /start ────────────────────────────────────────────────────────────────────
+
+async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    uid, uname, name = _user(update)
+    await send_menu(update.message, uid, uname, name)
+
+
+# ── /cleanup  (also reachable via button) ────────────────────────────────────
+
+async def cmd_cleanup(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    uid, uname, name = _user(update)
+    freed = wipe_downloads(uid)
+    await update.message.reply_text(
+        f"🗑️ Freed *{freed} MB* of cached downloads.", parse_mode="Markdown"
+    )
+    await send_menu(update.message, uid, uname, name)
+
+
+# ── cookie upload handler ─────────────────────────────────────────────────────
+
+async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Accept a .txt cookies file and save it to the user's cookie dir."""
+    uid, uname, name = _user(update)
+    doc = update.message.document
+    if not doc or not doc.file_name:
+        return
+
+    fname = doc.file_name.lower()
+    matched = None
+    for platform, (_, cookie_name, _) in PLATFORMS.items():
+        if fname == cookie_name or fname == platform + "_cookies.txt":
+            matched = (platform, cookie_name)
+            break
+
+    if not matched:
+        await update.message.reply_text(
+            "⚠️ Unrecognised cookie file name.\n"
+            "Expected one of:\n" +
+            "\n".join(f"  • `{v[1]}`" for v in PLATFORMS.values()),
+            parse_mode="Markdown",
+        )
+        return
+
+    platform, cookie_name = matched
+    dest = cdir(uid) / cookie_name
+    tg_file = await doc.get_file()
+    await tg_file.download_to_drive(str(dest))
+    await update.message.reply_text(
+        f"🍪 Cookies saved for *{platform.capitalize()}*.", parse_mode="Markdown"
+    )
+    await send_menu(update.message, uid, uname, name)
+
+
+# ── text / URL handler ────────────────────────────────────────────────────────
+
+async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    uid, uname, name = _user(update)
+    text  = (update.message.text or "").strip()
+    state = ctx.user_data.get("state", S_MAIN)
+
+    # ── set channel ──
+    if state == S_SET_CHANNEL:
+        ctx.user_data["state"] = S_MAIN
+        if text.lower() in ("clear", "none", "-"):
+            set_channel(uid, "clear")
+            await update.message.reply_text("📡 Output channel cleared.")
+        else:
+            set_channel(uid, normalize_chat(text))
+            await update.message.reply_text(
+                f"📡 Output channel set to `{text}`.", parse_mode="Markdown"
+            )
+        await send_menu(update.message, uid, uname, name)
+        return
+
+    # ── add URL for a platform ──
+    if state == S_ADD_URL:
+        platform = ctx.user_data.get("platform")
+        ctx.user_data["state"] = S_MAIN
+        if not platform:
+            await send_menu(update.message, uid, uname, name)
+            return
+
+        ok, err = validate_url(text, platform)
+        if not ok:
+            await update.message.reply_text(f"❌ {err}")
+            await send_menu(update.message, uid, uname, name)
+            return
+
+        existing = read_profiles(uid, platform)
+        if text in existing:
+            await update.message.reply_text("ℹ️ That URL is already in your list.")
+        else:
+            write_profiles(uid, platform, existing + [text])
+            await update.message.reply_text(
+                f"✅ Added to *{platform.capitalize()}*: `{text}`",
+                parse_mode="Markdown",
+            )
+        await send_menu(update.message, uid, uname, name)
+        return
+
+    # ── stories URL ──
+    if state == S_STORY:
+        platform = ctx.user_data.get("platform")
+        ctx.user_data["state"] = S_MAIN
+        ok, err = validate_url(text, platform)
+        if not ok:
+            await update.message.reply_text(f"❌ {err}")
+            await send_menu(update.message, uid, uname, name)
+            return
+
+        stop = asyncio.Event()
+        STOP_EVENTS[uid] = stop
+        ACTIVE_USERS.add(uid)
+        start_download_task(
+            uid,
+            do_special_download(
+                update.message, text, platform, "stories",
+                uid, uname, name, ctx.bot, stop,
+            ),
+        )
+        return
+
+    # ── highlights URL ──
+    if state == S_HIGHLIGHT:
+        platform = ctx.user_data.get("platform")
+        ctx.user_data["state"] = S_MAIN
+        ok, err = validate_url(text, platform)
+        if not ok:
+            await update.message.reply_text(f"❌ {err}")
+            await send_menu(update.message, uid, uname, name)
+            return
+
+        stop = asyncio.Event()
+        STOP_EVENTS[uid] = stop
+        ACTIVE_USERS.add(uid)
+        start_download_task(
+            uid,
+            do_special_download(
+                update.message, text, platform, "highlights",
+                uid, uname, name, ctx.bot, stop,
+            ),
+        )
+        return
+
+    # ── default: show menu ──
+    await send_menu(update.message, uid, uname, name)
+
+
+# ── inline-button dispatcher ──────────────────────────────────────────────────
+
+async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    q    = update.callback_query
+    uid, uname, name = _user(update)
+    data = q.data or ""
+    await _answer(q)
+
+    # ── back / main ──────────────────────────────────────────────────────────
+    if data in ("m_back", "m_main"):
+        ctx.user_data["state"] = S_MAIN
+        await send_menu(q.message, uid, uname, name, edit=True)
+        return
+
+    # ── add source ───────────────────────────────────────────────────────────
+    if data == "m_add":
+        await q.message.edit_text(
+            "➕ *Add source* — pick a platform:", parse_mode="Markdown",
+            reply_markup=kb_platforms("add"),
+        )
+        return
+
+    if data.startswith("add_"):
+        platform = data[4:]
+        if platform not in PLATFORMS:
+            return
+        ctx.user_data.update(state=S_ADD_URL, platform=platform)
+        hint = PLATFORM_URL_HINTS[platform]
+        await q.message.edit_text(
+            f"➕ *{platform.capitalize()}*\n"
+            f"Send the profile URL, e.g.:\n`{hint}username`",
+            parse_mode="Markdown",
+            reply_markup=kb_back(),
+        )
+        return
+
+    # ── remove source ────────────────────────────────────────────────────────
+    if data == "m_remove":
+        await q.message.edit_text(
+            "🚫 *Remove source* — pick a platform:", parse_mode="Markdown",
+            reply_markup=kb_platforms("rem"),
+        )
+        return
+
+    if data.startswith("rem_"):
+        platform = data[4:]
+        if platform not in PLATFORMS:
+            return
+        urls = read_profiles(uid, platform)
+        if not urls:
+            await q.message.edit_text(
+                f"ℹ️ No sources for *{platform.capitalize()}*.",
+                parse_mode="Markdown", reply_markup=kb_back(),
+            )
+            return
+        rows = [
+            [InlineKeyboardButton(f"❌ {u}", callback_data=f"del_{platform}_{i}")]
+            for i, u in enumerate(urls)
+        ]
+        rows.append([InlineKeyboardButton("🔙 Back", callback_data="m_back")])
+        await q.message.edit_text(
+            f"🚫 *{platform.capitalize()}* sources — tap to remove:",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+        return
+
+    if data.startswith("del_"):
+        parts    = data.split("_", 2)
+        platform = parts[1]
+        idx      = int(parts[2])
+        urls = read_profiles(uid, platform)
+        if 0 <= idx < len(urls):
+            removed = urls.pop(idx)
+            write_profiles(uid, platform, urls)
+            await q.message.reply_text(
+                f"✅ Removed: `{removed}`", parse_mode="Markdown"
+            )
+        await send_menu(q.message, uid, uname, name)
+        return
+
+    # ── list sources ─────────────────────────────────────────────────────────
+    if data == "m_list":
+        lines: list[str] = []
+        for p in PLATFORMS:
+            urls = read_profiles(uid, p)
+            if urls:
+                lines.append(f"*{p.capitalize()}*")
+                lines += [f"  • `{u}`" for u in urls]
+        text = "\n".join(lines) if lines else "ℹ️ No sources added yet."
+        await q.message.edit_text(text, parse_mode="Markdown", reply_markup=kb_back())
+        return
+
+    # ── run download ─────────────────────────────────────────────────────────
+    if data == "m_run":
+        if uid in ACTIVE_USERS:
+            await q.message.reply_text(
+                "⚠️ A download is already running. Tap 🚫 Stop first."
+            )
+            return
+        await q.message.edit_text(
+            "✅ *Run download* — choose media type:",
+            parse_mode="Markdown", reply_markup=kb_media(),
+        )
+        return
+
+    if data.startswith("dl_"):
+        choice = data[3:]
+        if uid in ACTIVE_USERS:
+            await q.message.reply_text("⚠️ Already running.")
+            return
+        stop = asyncio.Event()
+        start_download_task(
+            uid,
+            do_download(q.message, choice, uid, uname, name, ctx.bot, stop),
+        )
+        return
+
+    # ── stories ──────────────────────────────────────────────────────────────
+    if data == "m_stories":
+        await q.message.edit_text(
+            "📖 *Stories* — pick a platform:", parse_mode="Markdown",
+            reply_markup=kb_platforms("story"),
+        )
+        return
+
+    if data.startswith("story_"):
+        platform = data[6:]
+        if platform not in PLATFORMS:
+            return
+        ctx.user_data.update(state=S_STORY, platform=platform)
+        await q.message.edit_text(
+            f"📖 *Stories* › {platform.capitalize()}\nSend the profile URL:",
+            parse_mode="Markdown", reply_markup=kb_back(),
+        )
+        return
+
+    # ── highlights ───────────────────────────────────────────────────────────
+    if data == "m_highlights":
+        await q.message.edit_text(
+            "✨ *Highlights* — pick a platform:", parse_mode="Markdown",
+            reply_markup=kb_platforms("hl"),
+        )
+        return
+
+    if data.startswith("hl_"):
+        platform = data[3:]
+        if platform not in PLATFORMS:
+            return
+        ctx.user_data.update(state=S_HIGHLIGHT, platform=platform)
+        await q.message.edit_text(
+            f"✨ *Highlights* › {platform.capitalize()}\nSend the profile URL:",
+            parse_mode="Markdown", reply_markup=kb_back(),
+        )
+        return
+
+    # ── stop ─────────────────────────────────────────────────────────────────
+    if data == "m_stop":
+        ev = STOP_EVENTS.get(uid)
+        if ev:
+            ev.set()
+            await q.message.reply_text("⏹️ Stop signal sent.")
+        else:
+            await q.message.reply_text("ℹ️ No active download.")
+        return
+
+    # ── history ──────────────────────────────────────────────────────────────
+    if data == "m_history":
+        entries = read_history(uid)
+        if not entries:
+            await q.message.edit_text("ℹ️ No history yet.", reply_markup=kb_back())
+            return
+        lines = []
+        for e in entries[:20]:
+            lines.append(
+                f"📅 `{e.get('date','-')}` | *{e.get('platform','-')}* "
+                f"› `{e.get('user','-')}` | {e.get('media','-')} | "
+                f"{e.get('sent',0)} file(s)"
+            )
+        await q.message.edit_text(
+            "\n".join(lines), parse_mode="Markdown", reply_markup=kb_back()
+        )
+        return
+
+    # ── cookies ───────────────────────────────────────────────────────────────
+    if data == "m_cookies":
+        names = "\n".join(f"  • `{v[1]}`" for v in PLATFORMS.values())
+        await q.message.edit_text(
+            "🍪 *Set cookies*\n\n"
+            "Upload a Netscape-format `.txt` cookie file named after the platform:\n"
+            f"{names}\n\n"
+            "Just send the file in this chat and it will be saved automatically.",
+            parse_mode="Markdown", reply_markup=kb_back(),
+        )
+        return
+
+    # ── status ────────────────────────────────────────────────────────────────
+    if data == "m_status":
+        cached = folder_mb(udir(uid) / "downloads")
+        active = "▶️ Running" if uid in ACTIVE_USERS else "⏸️ Idle"
+        ch     = get_channel(uid) or "Direct chat"
+        text   = (
+            f"📊 *Status*\n\n"
+            f"• State   : {active}\n"
+            f"• Sources : {total_profiles(uid)}\n"
+            f"• Cookies : {cookie_summary(uid)}\n"
+            f"• Channel : `{ch}`\n"
+            f"• Cached  : {cached} MB\n"
+            f"• Sent    : {total_sent(uid)} file(s)"
+        )
+        await q.message.edit_text(text, parse_mode="Markdown", reply_markup=kb_back())
+        return
+
+    # ── set channel ───────────────────────────────────────────────────────────
+    if data == "m_channel":
+        ctx.user_data["state"] = S_SET_CHANNEL
+        await q.message.edit_text(
+            "📡 *Set output channel*\n\n"
+            "Send your channel username (e.g. `@mychannel`) or numeric ID.\n"
+            "Type `clear` to remove the current setting.",
+            parse_mode="Markdown", reply_markup=kb_back(),
+        )
+        return
+
+    # ── cleanup ───────────────────────────────────────────────────────────────
+    if data == "m_cleanup":
+        freed = wipe_downloads(uid)
+        await q.message.reply_text(
+            f"🗑️ Freed *{freed} MB* of cached downloads.", parse_mode="Markdown"
+        )
+        await send_menu(q.message, uid, uname, name)
+        return
+
+
+# =============================================================================
+# 12. MAIN
+# =============================================================================
+
+def bootstrap_env_cookies() -> None:
+    """
+    Read COOKIE_INSTAGRAM / COOKIE_TIKTOK / COOKIE_FACEBOOK / COOKIE_X from
+    environment variables and write them as Netscape cookie files into the
+    global cookie directory.  Values may be raw text or base64-encoded text.
+    This makes your Railway COOKIE_* variables actually work.
+    """
+    dest_dir = global_cookie_dir()
+    for env_key, cookie_filename in COOKIE_ENV_MAP.items():
+        value = os.environ.get(env_key, "").strip()
+        if not value:
+            continue
+        dest = dest_dir / cookie_filename
+        if dest.exists():
+            continue          # don't overwrite a manually uploaded file
+        # Detect base64: no newlines and only base64 chars
+        try:
+            decoded = base64.b64decode(value).decode("utf-8")
+            content = decoded
+        except Exception:
+            content = value   # treat as plain Netscape text
+        try:
+            dest.write_text(content)
+            print(f"[bootstrap] Wrote {cookie_filename} from env {env_key}")
+        except Exception as exc:
+            print(f"[bootstrap] Failed to write {cookie_filename}: {exc}")
+
+
+def main() -> None:
+    bootstrap_env_cookies()
+
+    app = (
+        Application.builder()
+        .token(TOKEN)
+        .build()
+    )
+
+    # Commands
+    app.add_handler(CommandHandler("start",   cmd_start))
+    app.add_handler(CommandHandler("menu",    cmd_start))
+    app.add_handler(CommandHandler("cleanup", cmd_cleanup))
+
+    # Inline buttons
+    app.add_handler(CallbackQueryHandler(handle_callback))
+
+    # Document upload (cookies)
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+
+    # Text / URLs
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    app.run_polling(allowed_updates=["message", "callback_query"])
+
+
+if __name__ == "__main__":
+    main()
