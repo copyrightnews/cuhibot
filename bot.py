@@ -238,7 +238,7 @@ def read_profiles(uid: int, platform: str) -> list[str]:
     p = profiles_path(uid, platform)
     if not p.exists():
         return []
-    return [line.strip() for line in p.read_text().splitlines() if line.strip()]
+    return [line.strip() for line in p.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def write_profiles(uid: int, platform: str, urls: Iterable[str]) -> None:
@@ -246,10 +246,10 @@ def write_profiles(uid: int, platform: str, urls: Iterable[str]) -> None:
     url_list = list(urls)
     with locked_file(path):
         if url_list:
-            path.write_text("\n".join(url_list) + "\n")
+            path.write_text("\n".join(url_list) + "\n", encoding="utf-8")
         else:
             # Truncate the file cleanly when all profiles are removed
-            path.write_text("")
+            path.write_text("", encoding="utf-8")
 
 
 def read_history(uid: int) -> list[dict]:
@@ -257,17 +257,17 @@ def read_history(uid: int) -> list[dict]:
     if not p.exists():
         return []
     try:
-        return json.loads(p.read_text())
+        return json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return []
 
 
 def append_history(uid: int, entry: dict) -> None:
     path = history_path(uid)
-    with locked_file(path):                      # BUG-08
+    with locked_file(path):
         current = read_history(uid)
         current.insert(0, entry)
-        path.write_text(json.dumps(current[:50], indent=2))
+        path.write_text(json.dumps(current[:50], indent=2), encoding="utf-8")
 
 
 def read_settings(uid: int) -> dict:
@@ -275,7 +275,7 @@ def read_settings(uid: int) -> dict:
     if not p.exists():
         return {}
     try:
-        return json.loads(p.read_text())
+        return json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
@@ -283,7 +283,7 @@ def read_settings(uid: int) -> dict:
 def write_settings(uid: int, data: dict) -> None:
     path = settings_path(uid)
     with locked_file(path):
-        path.write_text(json.dumps(data, indent=2))
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def get_channel(uid: int):
@@ -554,24 +554,19 @@ def file_kind(f: Path) -> str:
     return "photo" if f.suffix.lower() in PHOTO_EXT else "video"
 
 
-async def _send_group(target, group: list, *, _retries: int = 0) -> None:
-    """Send a media group, retrying on TimedOut/RetryAfter."""
-    try:
-        if hasattr(target, "reply_media_group"):
-            await target.reply_media_group(group)
-        else:
-            bot, cid = target
-            await bot.send_media_group(chat_id=cid, media=group)
-    except RetryAfter as exc:
-        if _retries >= 3:
-            raise
-        await asyncio.sleep(exc.retry_after + 1.0)
-        await _send_group(target, group, _retries=_retries + 1)
-    except TimedOut:
-        if _retries >= 4:
-            raise
-        await asyncio.sleep(5.0 * (2 ** _retries))
-        await _send_group(target, group, _retries=_retries + 1)
+async def _send_group(target, group: list) -> None:
+    """Send a media group once.
+
+    No retry here — file handles inside InputMediaPhoto/Video objects are
+    at EOF after the first attempt.  flush() catches any exception and
+    falls back to _send_one() per file, which reopens each file cleanly
+    and has its own retry logic.
+    """
+    if hasattr(target, "reply_media_group"):
+        await target.reply_media_group(group)
+    else:
+        bot, cid = target
+        await bot.send_media_group(chat_id=cid, media=group)
 
 
 async def _send_one(target, f: Path, kind: str, *, _retries: int = 0) -> bool:
@@ -981,7 +976,12 @@ async def do_special_download(msg, url: str, platform: str, mode: str,
                 "media":    mode,
                 "sent":     n,
             })
-        await status.set(f"✅ *Done!* {n} file(s) sent.", force=True)
+        if n == 0 and not stop.is_set():
+            await status.set("ℹ️ *No new media found.* (already downloaded or private)", force=True)
+        elif stop.is_set():
+            await status.set(f"⏹️ *Stopped.* {n} file(s) sent.", force=True)
+        else:
+            await status.set(f"✅ *Done!* {n} file(s) sent.", force=True)
     finally:
         _release(uid, stop)
         await send_menu(msg, uid, uname, name)
@@ -1000,7 +1000,7 @@ def start_download_task(uid: int, coro_func, *args) -> None:
     ev = asyncio.Event()
     STOP_EVENTS[uid] = ev
     ACTIVE_USERS.add(uid)
-    asyncio.ensure_future(coro_func(*args, ev))
+    asyncio.create_task(coro_func(*args, ev))
 
 
 # =============================================================================
@@ -1287,6 +1287,11 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
                 "⚠️ A download is already running. Tap 🚫 Stop first."
             )
             return
+        if not any(read_profiles(uid, p) for p in PLATFORMS):
+            await q.message.reply_text(
+                "ℹ️ No sources added yet. Tap ➕ Add source first."
+            )
+            return
         await q.message.edit_text(
             "✅ *Run download* — choose media type:",
             parse_mode="Markdown", reply_markup=kb_media(),
@@ -1459,7 +1464,7 @@ def bootstrap_env_cookies() -> None:
         except Exception:
             content = value   # treat as plain Netscape text
         try:
-            dest.write_text(content)
+            dest.write_text(content, encoding="utf-8")
             print(f"[bootstrap] Wrote {cookie_filename} from env {env_key}")
         except Exception as exc:
             print(f"[bootstrap] Failed to write {cookie_filename}: {exc}")
