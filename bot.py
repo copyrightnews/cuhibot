@@ -120,7 +120,7 @@ ACTIVE_USERS: set[int]                = set()   # BUG-10
 
 @contextmanager
 def locked_file(target: Path):
-    """Advisory file lock (cross-platform). BUG-08.
+    """Atomic advisory file lock (cross-platform).
 
     Uses os.open with O_CREAT|O_EXCL for atomic lock creation.
     Retries up to 20 times (2 seconds total), then raises instead
@@ -133,29 +133,35 @@ def locked_file(target: Path):
     for attempt in range(max_retries):
         try:
             fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            break
+            break  # acquired
         except FileExistsError:
-            # Check for stale locks (older than 30 seconds)
+            # Remove stale locks (older than 30 seconds) and retry immediately
             try:
                 age = time.time() - lock_path.stat().st_mtime
                 if age > 30:
                     lock_path.unlink(missing_ok=True)
-                    continue
+                    continue  # retry this attempt without sleeping
             except OSError:
                 pass
+            # Not stale — wait and try again unless we're on the last attempt
             if attempt == max_retries - 1:
                 raise TimeoutError(
                     f"Could not acquire lock on {target} after {max_retries} retries"
                 )
             time.sleep(0.1)
+
+    # Guard: if somehow fd is still None (e.g. stale-unlock exhausted retries)
+    if fd is None:
+        raise TimeoutError(
+            f"Could not acquire lock on {target} (lock never obtained)"
+        )
     try:
         yield
     finally:
-        if fd is not None:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+        try:
+            os.close(fd)
+        except OSError:
+            pass
         try:
             lock_path.unlink(missing_ok=True)
         except OSError:
@@ -357,7 +363,15 @@ def normalize_chat(value) -> int | str:
 
 
 def handle_from_url(url: str) -> str:
-    return url.rstrip("/").split("/")[-1].lstrip("@")
+    """Extract the username/handle from a profile URL.
+
+    Strips query strings and fragments before splitting so that
+    e.g. https://instagram.com/user/?hl=en correctly returns 'user'
+    instead of 'user?hl=en', which would corrupt archive directory names.
+    """
+    # Strip query string and fragment first
+    clean = url.split("?")[0].split("#")[0]
+    return clean.rstrip("/").split("/")[-1].lstrip("@")
 
 
 def stories_url_for(platform: str, url: str) -> str:
@@ -897,7 +911,7 @@ async def do_download(msg, choice: str, uid: int, uname: str,
     total   = 0
 
     try:
-        for platform, (_, cookie_name, sleep) in PLATFORMS.items():
+        for platform, (_, _, sleep) in PLATFORMS.items():
             if stop.is_set():
                 break
             urls = read_profiles(uid, platform)
