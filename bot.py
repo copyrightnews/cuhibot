@@ -49,6 +49,7 @@ from telegram import (
     InlineKeyboardMarkup,
     InputMediaPhoto,
     InputMediaVideo,
+    Message,
     Update,
 )
 from telegram.error import BadRequest, RetryAfter, TimedOut
@@ -539,7 +540,7 @@ async def send_menu(msg, uid: int, username: str, name: str, *, edit=False) -> N
 @dataclass
 class Status:
     """BUG-06: rate-limited edit_text wrapper that respects RetryAfter."""
-    message: "telegram.Message"
+    message: "Message"
     last_at: float = 0.0
     last_text: str = ""
 
@@ -595,6 +596,7 @@ def build_gdl_cmd(
         cmd += ["--filter", "extension in ('mp4','webm','mkv','mov','avi','m4v')"]
         effective = url
     elif mode == "documents":
+        cmd += ["--filter", "extension in ('jpg','jpeg','png','gif','webp','bmp','mp4','webm','mkv','mov','avi','m4v')"]
         effective = url
     elif mode == "stories":
         effective = stories_url_for(platform, url)
@@ -757,28 +759,23 @@ async def flush(target, batch: list[Path], send_as: str) -> int:
 
                 file_handles: list = []
                 try:
-                    handles = []
                     if send_as == "photos":
                         for f in chunk:
-                            fh = open(f, "rb")
-                            file_handles.append(fh)
-                            handles.append(fh)
-                        group = [InputMediaPhoto(fh) for fh in handles]
+                            file_handles.append(open(f, "rb"))
+                        group = [InputMediaPhoto(fh) for fh in file_handles]
                     elif send_as == "videos":
                         for f in chunk:
-                            fh = open(f, "rb")
-                            file_handles.append(fh)
-                            handles.append(fh)
-                        group = [InputMediaVideo(fh) for fh in handles]
+                            file_handles.append(open(f, "rb"))
+                        group = [InputMediaVideo(fh) for fh in file_handles]
                     else:  # mixed
+                        group = []
                         for f in chunk:
                             fh = open(f, "rb")
                             file_handles.append(fh)
                             if file_kind(f) == "photo":
-                                handles.append(InputMediaPhoto(fh))
+                                group.append(InputMediaPhoto(fh))
                             else:
-                                handles.append(InputMediaVideo(fh))
-                        group = handles
+                                group.append(InputMediaVideo(fh))
                     await _send_group(target, group)
                     sent += len(chunk)
                     sent_files.extend(chunk)
@@ -1014,7 +1011,7 @@ def _release(uid: int, ev: asyncio.Event) -> None:
     """BUG-09: only remove STOP_EVENTS[uid] if it still points to OUR event."""
     if STOP_EVENTS.get(uid) is ev:
         STOP_EVENTS.pop(uid, None)
-    ACTIVE_USERS.discard(uid)
+        ACTIVE_USERS.discard(uid)
 
 
 async def do_download(msg, choice: str, uid: int, uname: str,
@@ -1211,6 +1208,9 @@ async def cmd_cleanup(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     uid, uname, name = _user(update)
     if not _is_allowed(uid):
         await update.message.reply_text("🔒 Access denied.")
+        return
+    if uid in ACTIVE_USERS:
+        await update.message.reply_text("⚠️ Please stop the active download before freeing disk space.")
         return
     freed = wipe_downloads(uid)
     await update.message.reply_text(
@@ -1650,6 +1650,9 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 
     # ── cleanup ───────────────────────────────────────────────────────────────
     if data == "m_cleanup":
+        if uid in ACTIVE_USERS:
+            await q.message.reply_text("⚠️ Please stop the active download before freeing disk space.")
+            return
         freed = wipe_downloads(uid)
         await q.message.reply_text(
             f"🗑️ Freed *{freed} MB* of cached downloads.", parse_mode="Markdown"
