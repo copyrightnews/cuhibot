@@ -5,6 +5,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.2] — 2026-04-29
+
+### Summary
+Audit pass 6 — fixed 8 bugs including the root cause of video upload timeouts,
+inflated file counts, permanent file loss on failed sends, and missing rate limits.
+
+### Fixed
+
+| # | Severity | Location | Bug | Fix |
+|---|----------|----------|-----|-----|
+| 32 | CRITICAL | `main()` | Default `write_timeout=5s` caused almost every video upload to `TimedOut`, triggering 75s+ retry cascades | Set `write_timeout=60s`, `read_timeout=30s`, `connect_timeout=15s` via `HTTPXRequest` |
+| 33 | HIGH | `drain()` | `sent_count += len(batch)` counted all files including ones that failed to send — inflated reported totals | `flush()` now returns actual success count |
+| 34 | HIGH | `flush()` | Deleted ALL files in `finally` even if send failed — combined with download archive, files were **permanently lost** | Only delete files that were successfully sent |
+| 35 | MEDIUM | Stories handler | No `ACTIVE_USERS` check — users could start concurrent downloads | Added active-user guard |
+| 36 | MEDIUM | Stories/Highlights | No rate limit — users could spam download requests | Added `_check_rate_limit` + `_record_download_time` |
+| 37 | LOW | `folder_mb()` | `f.stat().st_size` could crash on locked/inaccessible files | Wrapped in `try/except OSError` |
+| 38 | LOW | `bootstrap_env_cookies()` | Used `print()` instead of `logger` — invisible in structured logs | Replaced with `logger.info`/`logger.error` |
+| 39 | LOW | `validate_url()` | Did not block `\n`/`\r` in URLs (HTTP header injection risk) | Added newline check |
+
+---
+
 ## [1.2.1] — 2026-04-29
 
 ### Summary
