@@ -145,7 +145,7 @@ def menu_text(uid, username, name):
         f"  🍪 Cookies : *{cookie_status(uid)}*"
         f"{ch_line}\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "👨‍💻 Developer: @copyrightpost"
+        "👤 Developer: @copyrightpost"
     )
 
 # ── KEYBOARDS ─────────────────────────────────────────────────────────────────
@@ -193,7 +193,7 @@ async def show_menu(msg, uid, username, name, edit=False):
     except Exception:
         try:
             await msg.reply_text(
-                f"@{username} | ✅ Sent: *{total_sent(uid)}* | 🗂 Sources: *{source_count(uid)}*",
+                f"@{username} | ✅ Sent: *{total_sent(uid)}* | 🌐 Sources: *{source_count(uid)}*",
                 reply_markup=main_menu_kb(), parse_mode="Markdown")
         except Exception:
             pass
@@ -238,7 +238,7 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if data == "m_remove":
         await q.message.edit_text(
-            "🗑️ *Remove source* — Choose platform:",
+            "🚫 *Remove source* — Choose platform:",
             reply_markup=platform_kb("rem"), parse_mode="Markdown")
         return
 
@@ -258,10 +258,10 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await q.message.edit_text("⚠️ No sources yet. Add one first.", reply_markup=back_kb())
             return
         await q.message.edit_text(
-            "🚀 *What to download?*\n\n"
+            "✅ *What to download?*\n\n"
             "🖼️ *Photos only* — sends as images\n"
             "🎬 *Videos only* — sends as videos\n"
-            "📦 *Both* — photos then videos\n"
+            "🔖 *Both* — photos then videos\n"
             "📁 *Files* — sends as documents",
             reply_markup=media_kb(), parse_mode="Markdown")
         return
@@ -274,7 +274,7 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if data == "m_highlights":
         await q.message.edit_text(
-            "🌟 *Download Highlights* — Choose platform:",
+            "✨ *Download Highlights* — Choose platform:",
             reply_markup=platform_kb("highlight"), parse_mode="Markdown")
         return
 
@@ -283,7 +283,7 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if ev and not ev.is_set():
             ev.set()
             await q.message.edit_text(
-                "⏹️ *Stop signal sent.* Download will halt immediately.",
+                "🚫 *Stop signal sent.* Download will halt immediately.",
                 reply_markup=back_kb(), parse_mode="Markdown")
         else:
             await q.message.edit_text("Nothing is running.", reply_markup=back_kb())
@@ -358,7 +358,7 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     callback_data=f"del_{platform}|||{u}")] for u in urls]
         rows.append([InlineKeyboardButton("🔙 Back", callback_data="m_back")])
         await q.message.edit_text(
-            f"🗑️ Tap profile to remove from *{platform}*:",
+            f"🚫 Tap profile to remove from *{platform}*:",
             reply_markup=InlineKeyboardMarkup(rows), parse_mode="Markdown")
         return
 
@@ -389,7 +389,7 @@ async def cb_router(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ctx.user_data["highlight_platform"] = platform
         set_state(ctx, STATE_HIGHLIGHT_URL)
         await q.message.edit_text(
-            f"🌟 *{platform.capitalize()} Highlights*\n\n"
+            f"✨ *{platform.capitalize()} Highlights*\n\n"
             f"Send the profile URL:\n`{PLATFORM_URLS[platform]}username/`",
             reply_markup=back_kb(), parse_mode="Markdown")
         return
@@ -671,7 +671,7 @@ async def do_download(msg, choice: str, uid: int,
     mode_map = {"1": "photos", "2": "videos", "3": "both", "4": "documents"}
     mode     = mode_map.get(choice, "photos")
     label    = {"photos": "🖼️ Photos", "videos": "🎬 Videos",
-                "both": "📦 Both", "documents": "📁 Files"}[mode]
+                "both": "🔖 Both", "documents": "📁 Files"}[mode]
 
     channel     = get_channel(uid)
     send_target = (bot, channel) if channel else msg
@@ -718,7 +718,7 @@ async def do_download(msg, choice: str, uid: int,
                     })
 
     elapsed = int((datetime.now() - start).total_seconds())
-    final   = (f"⏹️ *Stopped.* {total} file(s) in {elapsed}s."
+    final   = (f"🚫 *Stopped.* {total} file(s) in {elapsed}s."
                if stop.is_set() else
                f"✅ *Done!* {total} file(s) in {elapsed}s.")
     try:
@@ -733,7 +733,7 @@ async def do_download(msg, choice: str, uid: int,
 async def do_special_download(msg, url: str, platform: str,
                                mode: str, uid: int, uname: str,
                                name: str, bot, stop: asyncio.Event):
-    label       = "📖 Stories" if mode == "stories" else "🌟 Highlights"
+    label       = "📖 Stories" if mode == "stories" else "✨ Highlights"
     channel     = get_channel(uid)
     send_target = (bot, channel) if channel else msg
     user_handle = url.rstrip("/").split("/")[-1].lstrip("@")
