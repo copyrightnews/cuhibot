@@ -879,14 +879,14 @@ async def realtime_download(
     downloaded_bytes = 0  # track cumulative file sizes for this run
 
     async def drain() -> None:
-        nonlocal sent_count
+        nonlocal sent_count, downloaded_bytes
         if not buffer:
             return
         batch = list(buffer)
-        buffer.clear()
         # flush() returns the count of files actually sent successfully
         n = await flush(target, batch, send_as)
         sent_count += n
+        buffer.clear()  # only clear AFTER flush returns
 
     try:
         # BUG-02: polling loop with proper subprocess exit detection.
@@ -931,6 +931,8 @@ async def realtime_download(
                         await drain()
 
             if proc.returncode is not None:
+                # Process exited — drain remaining buffer and exit loop
+                await drain()
                 break
 
         # Final sweep after subprocess exited cleanly
@@ -1073,7 +1075,7 @@ async def do_download(msg, choice: str, uid: int, uname: str,
 
         elapsed = int((datetime.now() - started).total_seconds())
         if total == 0 and not stop.is_set():
-            final = f"ℹ️ *No new media found.* (all already downloaded or no sources set)"
+            final = "ℹ️ *No new media found.* (all already downloaded or no sources set)"
         elif stop.is_set():
             final = f"⏹️ *Stopped.* {total} file(s) in {elapsed}s."
         else:
@@ -1239,7 +1241,7 @@ async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
     fname = doc.file_name.lower()
     matched = None
     for platform, (_, cookie_name, _) in PLATFORMS.items():
-        if fname == cookie_name or fname == platform + "_cookies.txt":
+        if fname == cookie_name:
             matched = (platform, cookie_name)
             break
 
