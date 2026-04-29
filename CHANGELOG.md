@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.3] — 2026-04-29
+
+### Summary
+Audit pass 7 — fixed critical file-loss bug where `shutil.rmtree` destroyed files that `flush()` deliberately kept after failed sends.
+
+### Fixed
+
+| # | Severity | Location | Bug | Fix |
+|---|----------|----------|-----|-----|
+| 40 | CRITICAL | `realtime_download` finally | `shutil.rmtree(out_dir)` wiped ALL remaining files — including ones `flush()` intentionally kept because they failed to send. Completely negated fix #34 from v1.2.2 | Replaced with targeted cleanup: only deletes non-media temp files, keeps unsent media for automatic retry on next run |
+| 41 | LOW | `flush()` | Dead variable `group_ok` set but never read | Removed |
+| 42 | LOW | `flush()` chunk_bytes | TOCTOU race: `f.stat()` could crash if file deleted between `exists()` check and `stat()` call | Wrapped in `try/except OSError` |
+
+---
+
 ## [1.2.2] — 2026-04-29
 
 ### Summary
