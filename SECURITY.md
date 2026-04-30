@@ -25,15 +25,15 @@ We will acknowledge your report within **48 hours** and aim to release a fix wit
 
 | Version | Supported |
 |---------|-----------|
-| `v1.2.4` (latest) | ✅ Active development |
-| `v1.1.x` – `v1.2.3` | ⚠️ Critical fixes only |
+| `v1.2.5` (latest) | ✅ Active development |
+| `v1.1.x` – `v1.2.4` | ⚠️ Critical fixes only |
 | `< v1.1.0` | ❌ End of life |
 
 ---
 
 ## Security Features
 
-Cuhi Bot has been through **8 audit passes** with **45 bugs fixed** to reach a production-hardened state.
+Cuhi Bot has been through **9 audit passes** with **49 bugs fixed** to reach a production-hardened state.
 
 ### 🔒 Access Control
 
@@ -107,7 +107,7 @@ Cuhi Bot has been through **8 audit passes** with **45 bugs fixed** to reach a p
 
 ## Audit History
 
-The codebase has undergone **8 formal audit passes** resulting in **45 bug fixes**:
+The codebase has undergone **9 formal audit passes** resulting in **49 bug fixes**:
 
 | Pass | Version | Critical | High | Medium | Low |
 |------|---------|----------|------|--------|-----|
@@ -117,7 +117,8 @@ The codebase has undergone **8 formal audit passes** resulting in **45 bug fixes
 | 6    | v1.2.2  | 1 | 2 | 2 | 3 |
 | 7    | v1.2.3  | 1 | 0 | 0 | 2 |
 | 8    | v1.2.4  | 0 | 1 | 2 | 0 |
-| **Total** | | **8** | **11** | **14** | **18** |
+| 9    | v1.2.5  | 0 | 0 | 2 | 2 |
+| **Total** | | **8** | **11** | **16** | **20** |
 
 See [CHANGELOG.md](CHANGELOG.md) for the full fix-by-fix history.
 

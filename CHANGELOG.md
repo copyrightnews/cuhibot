@@ -5,6 +5,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.5] — 2026-05-01
+
+### Summary
+Audit pass 9 — full 1854-line read. Fixed poll-loop performance bug, missing menu after active-user block, wrong developer Telegram handle, and renamed misleading internal function.
+
+### Fixed
+
+| # | Severity | Location | Bug | Fix |
+|---|----------|----------|-----|-----|
+| 46 | MEDIUM | `realtime_download` | Poll loop called `asyncio.wait_for(proc.wait(), 0.5)` which **blocked the event loop for 0.5s every iteration** regardless of whether new files existed | Replaced with `proc.returncode is not None` (non-blocking); sleep now only runs on the idle path |
+| 47 | LOW | `_split_mixed` | Misleading function name — it only chunks to ≤10 files, does not split by media type | Renamed to `_chunk_batch` |
+| 49 | MEDIUM | `handle_text` S_STORY/S_HIGHLIGHT | After blocking a download start due to `uid in ACTIVE_USERS`, the handler returned **without showing the menu** — user was left with no UI | Added `await send_menu()` before `return` in both states |
+| 51 | LOW | `render_menu` | Developer Telegram handle was `@copyrightpost` (wrong) | Corrected to `@copyrightnews` |
+
+---
+
 ## [1.2.4] — 2026-04-30
 
 ### Summary

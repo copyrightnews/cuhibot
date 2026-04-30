@@ -546,7 +546,7 @@ def render_menu(uid: int, username: str, name: str) -> str:
         f" 🍪 Cookies : *{cookie_summary(uid)}*"
         f"{ch_line}{disk_line}\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "👨‍💻 Developer: @copyrightpost"
+        "👨‍💻 Developer: @copyrightnews"
     )
 
 
@@ -728,8 +728,8 @@ async def _send_one(target, f: Path, kind: str, *, _retries: int = 0) -> bool:
         return False
 
 
-def _split_mixed(batch: list[Path]) -> list[list[Path]]:
-    """BUG-12: don't mix weird payloads; produce Telegram-compatible chunks <= 10."""
+def _chunk_batch(batch: list[Path]) -> list[list[Path]]:
+    """Split a batch into Telegram-compatible chunks of at most 10 files each."""
     chunks: list[list[Path]] = []
     current: list[Path] = []
     for f in batch:
@@ -770,7 +770,7 @@ async def flush(target, batch: list[Path], send_as: str) -> int:
                 sent_files.append(f)
 
         else:
-            for chunk in _split_mixed(batch):
+            for chunk in _chunk_batch(batch):
                 for _retries in range(5):
                     file_handles: list = []
                     try:
@@ -943,7 +943,7 @@ async def realtime_download(
         buffer.clear()  # only clear AFTER flush returns
 
     try:
-        # BUG-02: polling loop with proper subprocess exit detection.
+        # BUG-46 fix: non-blocking returncode check first; sleep only when idle.
         while True:
             if stop.is_set():
                 try:
@@ -952,12 +952,9 @@ async def realtime_download(
                     pass
                 break
 
-            # Check if process has exited (non-blocking)
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=0.5)
-                # Process exited — fall through to break below
-            except asyncio.TimeoutError:
-                pass  # still running, continue polling
+            # Non-blocking exit check — does NOT block the event loop
+            if proc.returncode is not None:
+                break  # post-loop final sweep handles any remaining files
 
             if out_dir.exists():
                 new_files = []
@@ -969,7 +966,7 @@ async def realtime_download(
                     if f.name.endswith(('.part', '.ytdl', '.tmp')):
                         continue
                     new_files.append(f)
-                
+
                 if new_files:
                     sizes1 = {}
                     for f in new_files:
@@ -977,9 +974,9 @@ async def realtime_download(
                             sizes1[f] = f.stat().st_size
                         except OSError:
                             pass
-                    
-                    await asyncio.sleep(0.5)
-                    
+
+                    await asyncio.sleep(0.5)  # stability: one bulk sleep for all new files
+
                     for f in new_files:
                         try:
                             s2 = f.stat().st_size
@@ -997,11 +994,11 @@ async def realtime_download(
                             pass
                         if len(buffer) >= MEDIA_GROUP_MAX:
                             await drain()
+                else:
+                    await asyncio.sleep(0.5)  # nothing new — yield before next poll
+            else:
+                await asyncio.sleep(0.5)  # output dir not ready yet — yield
 
-            if proc.returncode is not None:
-                # Process exited — drain remaining buffer and exit loop
-                await drain()
-                break
 
         # Final sweep after subprocess exited cleanly
         if not stop.is_set() and out_dir.exists():
@@ -1424,6 +1421,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             return
         if uid in ACTIVE_USERS:
             await update.message.reply_text("⚠️ A download is already running. Tap 🚫 Stop first.")
+            await send_menu(update.message, uid, uname, name)
             return
         allowed, remaining = _check_rate_limit(uid)
         if not allowed:
@@ -1453,6 +1451,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             return
         if uid in ACTIVE_USERS:
             await update.message.reply_text("⚠️ A download is already running. Tap 🚫 Stop first.")
+            await send_menu(update.message, uid, uname, name)
             return
         allowed, remaining = _check_rate_limit(uid)
         if not allowed:
