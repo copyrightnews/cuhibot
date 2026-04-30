@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>A self-hosted Telegram bot for downloading and forwarding media from Instagram, TikTok, Facebook, and X (Twitter).</strong>
+  <strong>A production-hardened, self-hosted Telegram bot for downloading and forwarding media from Instagram, TikTok, Facebook, and X (Twitter).</strong>
 </p>
 
 <p align="center">
@@ -14,18 +14,18 @@
   <a href="#security">Security</a> •
   <a href="#commands">Commands</a> •
   <a href="CHANGELOG.md">Changelog</a> •
-  <a href="#contributors">Contributors</a> •
+  <a href="#authors">Authors</a> •
   <a href="#license">License</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.2.3-brightgreen?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/version-1.2.4-brightgreen?style=flat-square" alt="Version" />
   <img src="https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
   <img src="https://img.shields.io/badge/telegram--bot-22.1-26A5E4?style=flat-square&logo=telegram&logoColor=white" alt="python-telegram-bot" />
   <img src="https://img.shields.io/badge/gallery--dl-1.32-orange?style=flat-square" alt="gallery-dl" />
   <img src="https://img.shields.io/badge/yt--dlp-latest-red?style=flat-square" alt="yt-dlp" />
   <img src="https://img.shields.io/badge/deploy-Railway-0B0D0E?style=flat-square&logo=railway&logoColor=white" alt="Railway" />
-  <img src="https://img.shields.io/badge/bugs_fixed-42-critical?style=flat-square" alt="Bugs Fixed" />
+  <img src="https://img.shields.io/badge/bugs_fixed-45-critical?style=flat-square" alt="Bugs Fixed" />
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" />
 </p>
 
@@ -51,7 +51,7 @@
 | 🚫 **Stop control** | Gracefully stop any running download mid-stream |
 | 🗑️ **Disk management** | One-tap cleanup of cached downloads to free disk space |
 | 🔒 **Access control** | User allowlist, admin system, rate limiting, and input validation |
-| 🛡️ **Production-hardened** | 42 bugs fixed across 7 audit passes — zero-error codebase |
+| 🛡️ **Production-hardened** | 45 bugs fixed across 8 audit passes — zero-error codebase |
 
 ## Architecture
 
@@ -105,8 +105,8 @@ $COOKIES_ROOT/
 
 ```bash
 # Clone the repo
-git clone https://github.com/naimurnstu/x.git
-cd x
+git clone https://github.com/copyrightnews/cuhibot.git
+cd cuhibot
 
 # Install dependencies
 pip install -r requirements.txt
@@ -183,7 +183,7 @@ Cuhi Bot is production-hardened with multiple layers of security. See [SECURITY.
 | 🔒 **Access control** | User allowlist (`ALLOWED_USERS`) + admin system (`ADMIN_IDS`) |
 | ⏱️ **Rate limiting** | 30-second cooldown between downloads per user |
 | 🚫 **Concurrency guard** | Only one active download per user at a time |
-| 🛡️ **Input validation** | URL format, domain, length, shell injection, and newline checks |
+| 🛡️ **Input validation** | Strict URL domain parsing, length, shell injection, and newline checks |
 | 📏 **File size limits** | 50 MB Telegram API limit enforced pre-upload; 1 MB cookie file limit |
 | 🔐 **Data isolation** | Per-user directories for all data — no cross-user access |
 | 🔗 **Atomic file locking** | `O_CREAT|O_EXCL` locks prevent race conditions on concurrent writes |
@@ -264,7 +264,7 @@ The bot auto-detects and saves cookies for the correct platform.
 | <a href="https://github.com/ebnycuhie"><img src="https://github.com/ebnycuhie.png" width="50" /></a> | **ebnycuhie** | Creator, Maintainer | [GitHub](https://github.com/ebnycuhie) · [Telegram](https://t.me/ebnycuhie) · [Instagram](https://instagram.com/ebnycuhie) |
 | <a href="https://github.com/sayfalse"><img src="https://github.com/sayfalse.png" width="50" /></a> | **sayfalse** | Creator, Maintainer | [GitHub](https://github.com/sayfalse) · [Telegram](https://t.me/sayfalsex) · [Instagram](https://instagram.com/sudoflame) |
 
-See all [contributors](https://github.com/naimurnstu/x/graphs/contributors).
+See all [contributors](https://github.com/copyrightnews/cuhibot/graphs/contributors).
 
 ## Contributing
 
@@ -275,10 +275,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and [CODE_OF_CONDUCT.md](C
 ## Support
 
 - 📢 **Telegram** — [@copyrightnews](https://t.me/copyrightnews)
-- 🐛 **Bug reports** — [GitHub Issues](https://github.com/naimurnstu/x/issues)
+- 🐛 **Bug reports** — [GitHub Issues](https://github.com/copyrightnews/cuhibot/issues)
 - 🔒 **Security** — See [SECURITY.md](SECURITY.md) for responsible disclosure
 
 ## License
 
 [MIT](LICENSE) © 2026 ebnycuhie & sayfalse
-

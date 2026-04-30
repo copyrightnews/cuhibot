@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.4] — 2026-04-30
+
+### Summary
+Audit pass 8 — final deep audit fixing a URL validation security bypass, sequential event-loop blocking during file checks, and download stalls caused by Telegram rate-limit sleeps in the status updater.
+
+### Fixed
+
+| # | Severity | Location | Bug | Fix |
+|---|----------|----------|-----|-----|
+| 43 | HIGH | `validate_url` | **Security bypass**: used substring check (`dom in url`), allowing crafted URLs like `https://attacker.com/instagram.com/user` to pass validation | Replaced with strict `urllib.parse.urlparse` domain extraction — now checks `netloc` against the platform domain allowlist |
+| 44 | MEDIUM | `realtime_download` | **Performance**: file size stability check slept `0.5s` sequentially per new file — 10 new files = 5s of event-loop blocking | Refactored to bulk file size check: single `0.5s` sleep covers all new files simultaneously |
+| 45 | MEDIUM | `Status.set` | **Stability**: `RetryAfter` exception handler called `await asyncio.sleep(retry_after + 0.5)`, completely freezing the active download orchestrator for up to 30+ seconds | Removed the sleep; now advances internal `last_at` timestamp to defer future UI updates without blocking the download engine |
+
+---
+
 ## [1.2.3] — 2026-04-29
 
 ### Summary

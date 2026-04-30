@@ -6,7 +6,7 @@ Thank you for considering contributing to **Cuhi Bot**! Every contribution helps
 
 ### 🐛 Reporting Bugs
 
-- Check the [existing issues](https://github.com/naimurnstu/x/issues) to avoid duplicates
+- Check the [existing issues](https://github.com/copyrightnews/cuhibot/issues) to avoid duplicates
 - Use the **Bug Report** template if available
 - Include: steps to reproduce, expected vs. actual behavior, error logs, and your environment
 

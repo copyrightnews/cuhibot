@@ -25,15 +25,15 @@ We will acknowledge your report within **48 hours** and aim to release a fix wit
 
 | Version | Supported |
 |---------|-----------|
-| `v1.2.x` (latest) | ✅ Active development |
-| `v1.1.x` | ⚠️ Critical fixes only |
+| `v1.2.4` (latest) | ✅ Active development |
+| `v1.1.x` – `v1.2.3` | ⚠️ Critical fixes only |
 | `< v1.1.0` | ❌ End of life |
 
 ---
 
 ## Security Features
 
-Cuhi Bot has been through **7 audit passes** with **42 bugs fixed** to reach a production-hardened state.
+Cuhi Bot has been through **8 audit passes** with **45 bugs fixed** to reach a production-hardened state.
 
 ### 🔒 Access Control
 
@@ -54,7 +54,7 @@ Cuhi Bot has been through **7 audit passes** with **42 bugs fixed** to reach a p
 
 | Feature | Details |
 |---------|---------|
-| **URL validation** | URLs must start with `https://`, belong to the correct platform domain, and be ≤ 500 characters. |
+| **URL validation** | URLs must start with `https://`, have their domain strictly parsed via `urlparse` against the platform allowlist, and be ≤ 500 characters. |
 | **Shell injection guard** | URLs containing `;`, `` ` ``, `|`, `$`, or `&&` are rejected to prevent command injection. |
 | **HTTP header injection** | URLs containing `\n` or `\r` (newline/carriage return) are rejected. |
 | **Max profiles limit** | Users can add at most **50 sources per platform** to prevent resource abuse. |
@@ -107,7 +107,7 @@ Cuhi Bot has been through **7 audit passes** with **42 bugs fixed** to reach a p
 
 ## Audit History
 
-The codebase has undergone **7 formal audit passes** resulting in **42 bug fixes**:
+The codebase has undergone **8 formal audit passes** resulting in **45 bug fixes**:
 
 | Pass | Version | Critical | High | Medium | Low |
 |------|---------|----------|------|--------|-----|
@@ -116,7 +116,8 @@ The codebase has undergone **7 formal audit passes** resulting in **42 bug fixes
 | 5    | v1.2.1  | 2 | 0 | 0 | 0 |
 | 6    | v1.2.2  | 1 | 2 | 2 | 3 |
 | 7    | v1.2.3  | 1 | 0 | 0 | 2 |
-| **Total** | | **8** | **10** | **12** | **18** |
+| 8    | v1.2.4  | 0 | 1 | 2 | 0 |
+| **Total** | | **8** | **11** | **14** | **18** |
 
 See [CHANGELOG.md](CHANGELOG.md) for the full fix-by-fix history.
 
