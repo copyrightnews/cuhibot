@@ -139,6 +139,7 @@ S_MAIN, S_ADD_URL, S_SET_CHANNEL, S_STORY, S_HIGHLIGHT = (
 STOP_EVENTS: dict[int, asyncio.Event] = {}
 ACTIVE_USERS: set[int]                = set()   # BUG-10
 _LAST_DOWNLOAD: dict[int, float]      = {}       # rate-limit tracker
+_TASKS: set[asyncio.Task]             = set()    # BUG-52: prevent GC of fire-and-forget tasks
 
 
 # =============================================================================
@@ -1201,7 +1202,7 @@ def start_download_task(uid: int, coro_func, *args) -> None:
     """
     Register a fresh stop-event for `uid`, then fire the coroutine as a task.
     BUG-09/10: signals any pre-existing run to quit before starting a new one.
-    Creates the event and passes it to the coroutine to ensure consistency.
+    BUG-52: stores task reference in _TASKS to prevent Python GC.
     """
     old = STOP_EVENTS.get(uid)
     if old:
@@ -1210,7 +1211,9 @@ def start_download_task(uid: int, coro_func, *args) -> None:
     ev = asyncio.Event()
     STOP_EVENTS[uid] = ev
     ACTIVE_USERS.add(uid)
-    asyncio.create_task(coro_func(*args, ev))
+    task = asyncio.create_task(coro_func(*args, ev))
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
 
 
 # =============================================================================
@@ -1345,6 +1348,17 @@ async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
             "❌ Failed to save the cookie file. Please try again."
         )
         return
+    # BUG-54: verify file size on disk (Telegram metadata may be missing)
+    try:
+        actual_size = dest.stat().st_size
+        if actual_size > MAX_COOKIE_FILE_BYTES:
+            dest.unlink(missing_ok=True)
+            await update.message.reply_text(
+                f"⚠️ Cookie file too large ({actual_size // 1024} KB, max {MAX_COOKIE_FILE_BYTES // 1024} KB)."
+            )
+            return
+    except OSError:
+        pass
     await update.message.reply_text(
         f"🍪 Cookies saved for *{platform.capitalize()}*.", parse_mode="Markdown"
     )
@@ -1625,9 +1639,14 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 
     # ── stories ──────────────────────────────────────────────────────────────
     if data == "m_stories":
+        # BUG-53: only Instagram supports stories via gallery-dl
+        rows = [[InlineKeyboardButton("Instagram", callback_data="story_instagram")]]
+        rows.append([InlineKeyboardButton("🔙 Back", callback_data="m_back")])
         await q.message.edit_text(
-            "📖 *Stories* — pick a platform:", parse_mode="Markdown",
-            reply_markup=kb_platforms("story"),
+            "📖 *Stories* — pick a platform:\n"
+            "_(Currently only Instagram is supported)_",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(rows),
         )
         return
 
@@ -1644,9 +1663,14 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 
     # ── highlights ───────────────────────────────────────────────────────────
     if data == "m_highlights":
+        # BUG-53: only Instagram supports highlights via gallery-dl
+        rows = [[InlineKeyboardButton("Instagram", callback_data="hl_instagram")]]
+        rows.append([InlineKeyboardButton("🔙 Back", callback_data="m_back")])
         await q.message.edit_text(
-            "✨ *Highlights* — pick a platform:", parse_mode="Markdown",
-            reply_markup=kb_platforms("hl"),
+            "✨ *Highlights* — pick a platform:\n"
+            "_(Currently only Instagram is supported)_",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(rows),
         )
         return
 

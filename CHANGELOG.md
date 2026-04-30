@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.6] — 2026-05-01
+
+### Summary
+Feature-level audit — traced every button, state, and code path. Fixed task GC risk, fake stories/highlights for non-Instagram platforms, and cookie file-size bypass.
+
+### Fixed
+
+| # | Severity | Location | Bug | Fix |
+|---|----------|----------|-----|-----|
+| 52 | MEDIUM | `start_download_task` | `asyncio.create_task()` returned a task with no stored reference — Python 3.10+ may garbage-collect it mid-run, silently killing downloads | Task references now stored in `_TASKS` set; removed via `done_callback` |
+| 53 | MEDIUM | Stories/Highlights menus | All 4 platforms were shown for Stories and Highlights, but only Instagram supports these in gallery-dl — other platforms silently downloaded the wrong content | Stories and Highlights menus now show only Instagram with a clear note |
+| 54 | LOW | `handle_document` | Cookie file size was only checked via Telegram's `file_size` metadata (which can be `None`), allowing unlimited-size files to bypass the 1 MB limit | Added post-download on-disk size verification; oversized files are deleted |
+
+---
+
 ## [1.2.5] — 2026-05-01
 
 ### Summary
