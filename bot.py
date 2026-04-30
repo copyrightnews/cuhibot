@@ -351,7 +351,20 @@ def cookie_summary(uid: int) -> str:
 
 
 def total_sent(uid: int) -> int:
-    return sum(e.get("sent", 0) for e in read_history(uid))
+    s = read_settings(uid)
+    if "total_sent_files" not in s:
+        count = sum(e.get("sent", 0) for e in read_history(uid))
+        s["total_sent_files"] = count
+        write_settings(uid, s)
+    return s.get("total_sent_files", 0)
+
+
+def add_sent_files(uid: int, count: int) -> None:
+    if count <= 0:
+        return
+    s = read_settings(uid)
+    s["total_sent_files"] = s.get("total_sent_files", 0) + count
+    write_settings(uid, s)
 
 
 def total_downloaded_mb(uid: int) -> float:
@@ -757,48 +770,74 @@ async def flush(target, batch: list[Path], send_as: str) -> int:
                             sent_files.append(f)
                     continue
 
-                file_handles: list = []
-                try:
-                    if send_as == "photos":
+                for _retries in range(5):
+                    file_handles: list = []
+                    try:
+                        if send_as == "photos":
+                            for f in chunk:
+                                file_handles.append(open(f, "rb"))
+                            group = [InputMediaPhoto(fh) for fh in file_handles]
+                        elif send_as == "videos":
+                            for f in chunk:
+                                file_handles.append(open(f, "rb"))
+                            group = [InputMediaVideo(fh) for fh in file_handles]
+                        else:  # mixed
+                            group = []
+                            for f in chunk:
+                                fh = open(f, "rb")
+                                file_handles.append(fh)
+                                if file_kind(f) == "photo":
+                                    group.append(InputMediaPhoto(fh))
+                                else:
+                                    group.append(InputMediaVideo(fh))
+                        await _send_group(target, group)
+                        sent += len(chunk)
+                        sent_files.extend(chunk)
+                        for fh in file_handles:
+                            try: fh.close()
+                            except Exception: pass
+                        break  # Success
+                    except RetryAfter as exc:
+                        for fh in file_handles:
+                            try: fh.close()
+                            except Exception: pass
+                        if _retries >= 3:
+                            logger.warning("Giving up group send after %d RetryAfter retries", _retries)
+                            for f in chunk:
+                                kind = {"photos": "photo", "videos": "video"}.get(send_as) or file_kind(f)
+                                if await _send_one(target, f, kind):
+                                    sent += 1
+                                    sent_files.append(f)
+                            break
+                        wait = exc.retry_after + 1.0
+                        logger.info("RetryAfter on group send — waiting %.1fs", wait)
+                        await asyncio.sleep(wait)
+                    except TimedOut:
+                        for fh in file_handles:
+                            try: fh.close()
+                            except Exception: pass
+                        if _retries >= 4:
+                            logger.warning("Giving up group send after %d TimedOut retries", _retries)
+                            for f in chunk:
+                                kind = {"photos": "photo", "videos": "video"}.get(send_as) or file_kind(f)
+                                if await _send_one(target, f, kind):
+                                    sent += 1
+                                    sent_files.append(f)
+                            break
+                        wait = 5.0 * (2 ** _retries)
+                        logger.info("TimedOut on group send — waiting %.1fs then retrying", wait)
+                        await asyncio.sleep(wait)
+                    except Exception as e:
+                        for fh in file_handles:
+                            try: fh.close()
+                            except Exception: pass
+                        logger.warning("Group send failed: %s, falling back to individual sends", str(e))
                         for f in chunk:
-                            file_handles.append(open(f, "rb"))
-                        group = [InputMediaPhoto(fh) for fh in file_handles]
-                    elif send_as == "videos":
-                        for f in chunk:
-                            file_handles.append(open(f, "rb"))
-                        group = [InputMediaVideo(fh) for fh in file_handles]
-                    else:  # mixed
-                        group = []
-                        for f in chunk:
-                            fh = open(f, "rb")
-                            file_handles.append(fh)
-                            if file_kind(f) == "photo":
-                                group.append(InputMediaPhoto(fh))
-                            else:
-                                group.append(InputMediaVideo(fh))
-                    await _send_group(target, group)
-                    sent += len(chunk)
-                    sent_files.extend(chunk)
-                except Exception:
-                    # Close group handles BEFORE falling back to one-by-one
-                    for fh in file_handles:
-                        try:
-                            fh.close()
-                        except Exception:
-                            pass
-                    file_handles.clear()
-                    for f in chunk:
-                        kind = {"photos": "photo", "videos": "video"}.get(send_as) or file_kind(f)
-                        if await _send_one(target, f, kind):
-                            sent += 1
-                            sent_files.append(f)
-                finally:
-                    # Close any remaining open handles from the group attempt
-                    for fh in file_handles:
-                        try:
-                            fh.close()
-                        except Exception:
-                            pass
+                            kind = {"photos": "photo", "videos": "video"}.get(send_as) or file_kind(f)
+                            if await _send_one(target, f, kind):
+                                sent += 1
+                                sent_files.append(f)
+                        break
     finally:
         # Only delete files that were actually sent successfully
         for f in sent_files:
@@ -908,10 +947,12 @@ async def realtime_download(
                         continue
                     if f.suffix.lower() not in exts:
                         continue
+                    if f.name.endswith(('.part', '.ytdl', '.tmp')):
+                        continue
                     # only process files that aren't still being written
                     try:
                         s1 = f.stat().st_size
-                        await asyncio.sleep(0.2)
+                        await asyncio.sleep(0.5)
                         s2 = f.stat().st_size
                         if s1 != s2:
                             continue
@@ -939,6 +980,8 @@ async def realtime_download(
                 if f in seen or not f.is_file():
                     continue
                 if f.suffix.lower() not in exts:
+                    continue
+                if f.name.endswith(('.part', '.ytdl', '.tmp')):
                     continue
                 seen.add(f)
                 buffer.append(f)
@@ -999,6 +1042,9 @@ async def realtime_download(
     # Persist cumulative downloaded bytes
     if downloaded_bytes > 0:
         add_downloaded_bytes(uid, downloaded_bytes)
+        
+    if sent_count > 0:
+        add_sent_files(uid, sent_count)
 
     return sent_count
 
@@ -1177,8 +1223,16 @@ def _check_rate_limit(uid: int) -> tuple[bool, int]:
     return True, 0
 
 
+def _prune_rate_limits() -> None:
+    now = time.time()
+    stale = [k for k, v in _LAST_DOWNLOAD.items() if (now - v) > RATE_LIMIT_SECONDS]
+    for k in stale:
+        _LAST_DOWNLOAD.pop(k, None)
+
+
 def _record_download_time(uid: int) -> None:
     _LAST_DOWNLOAD[uid] = time.time()
+    _prune_rate_limits()
 
 
 async def _answer(q) -> None:
