@@ -1466,6 +1466,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         allowed, remaining = _check_rate_limit(uid)
         if not allowed:
             await update.message.reply_text(f"⏳ Please wait {remaining}s before starting another download.")
+            await send_menu(update.message, uid, uname, name)  # BUG-66: re-render menu
             return
         _record_download_time(uid)
         start_download_task(
@@ -1496,6 +1497,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         allowed, remaining = _check_rate_limit(uid)
         if not allowed:
             await update.message.reply_text(f"⏳ Please wait {remaining}s before starting another download.")
+            await send_menu(update.message, uid, uname, name)  # BUG-66: re-render menu
             return
         _record_download_time(uid)
         start_download_task(
@@ -1827,6 +1829,10 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 
         s = read_settings(uid)
         s["schedule"] = interval_key
+        # BUG-70: persist metadata needed for restart recovery
+        s["schedule_chat_id"] = q.message.chat_id
+        s["schedule_uname"] = uname
+        s["schedule_name"] = name
         write_settings(uid, s)
 
         if interval_key == "off":
@@ -2069,9 +2075,13 @@ async def cmd_export(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def _import_sources(uid: int, text: str) -> tuple[int, int]:
-    """Parse an exported sources file and import URLs. Returns (added, skipped)."""
+    """Parse an exported sources file and import URLs. Returns (added, skipped).
+    BUG-55: batches reads/writes per platform to avoid N+1 disk I/O.
+    """
     added = 0
     skipped = 0
+    # Group URLs by platform first, then batch-write once per platform
+    pending: dict[str, list[str]] = {}
     current_platform: str | None = None
 
     for raw_line in text.splitlines():
@@ -2080,7 +2090,7 @@ def _import_sources(uid: int, text: str) -> tuple[int, int]:
             continue
         # Header like "# INSTAGRAM"
         if line.startswith("#"):
-            tag = line.lstrip("# ").strip().lower()
+            tag = line.lstrip("#").strip().lower()  # BUG-72: strip only '#' then whitespace
             if tag in PLATFORMS:
                 current_platform = tag
             continue
@@ -2090,17 +2100,27 @@ def _import_sources(uid: int, text: str) -> tuple[int, int]:
             if not ok:
                 skipped += 1
                 continue
-            existing = read_profiles(uid, current_platform)
-            if line in existing:
+            if current_platform not in pending:
+                pending[current_platform] = []
+            pending[current_platform].append(line)
+        else:
+            skipped += 1
+
+    # Batch-write per platform: one read + one write per platform
+    for plat, new_urls in pending.items():
+        existing = read_profiles(uid, plat)
+        existing_set = set(existing)
+        for url in new_urls:
+            if url in existing_set:
                 skipped += 1
                 continue
             if len(existing) >= MAX_PROFILES_PER_PLATFORM:
                 skipped += 1
                 continue
-            write_profiles(uid, current_platform, existing + [line])
+            existing.append(url)
+            existing_set.add(url)
             added += 1
-        else:
-            skipped += 1
+        write_profiles(uid, plat, existing)
 
     return added, skipped
 
@@ -2116,7 +2136,10 @@ SCHEDULE_OPTIONS = {
 
 
 async def _scheduled_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """Callback fired by JobQueue. Runs a full download for the user."""
+    """Callback fired by JobQueue. Runs a full download for the user.
+    BUG-71: wrapped in try/except to prevent unhandled exceptions from
+    killing the repeating job permanently.
+    """
     uid = ctx.job.data["uid"]
     chat_id = ctx.job.data["chat_id"]
     uname = ctx.job.data.get("uname", "unknown")
@@ -2174,9 +2197,47 @@ async def _scheduled_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await status.set(
             f"⏰ *Scheduled download done!* {total} file(s).", force=True
         )
+    except Exception:
+        # BUG-71: log but suppress — don't let exceptions kill the repeating job
+        logger.exception("Scheduled job failed for uid=%s", uid)
     finally:
         _release(uid, ev)
         wipe_downloads(uid)
+async def _restore_schedules(app: Application) -> None:
+    """BUG-61: Restore scheduled jobs on startup by scanning persisted settings.
+    Called as Application.post_init callback after the bot is ready.
+    """
+    if not DATA_ROOT.exists():
+        return
+    restored = 0
+    for user_dir in DATA_ROOT.iterdir():
+        if not user_dir.is_dir() or not user_dir.name.isdigit():
+            continue
+        uid = int(user_dir.name)
+        s = read_settings(uid)
+        interval_key = s.get("schedule", "off")
+        chat_id = s.get("schedule_chat_id")
+        if interval_key == "off" or interval_key not in SCHEDULE_OPTIONS or not chat_id:
+            continue
+        interval = SCHEDULE_OPTIONS[interval_key]
+        if interval <= 0:
+            continue
+        job_name = f"schedule_{uid}"
+        app.job_queue.run_repeating(
+            _scheduled_job,
+            interval=interval,
+            first=interval,
+            name=job_name,
+            data={
+                "uid": uid,
+                "chat_id": chat_id,
+                "uname": s.get("schedule_uname", "unknown"),
+                "name": s.get("schedule_name", "User"),
+            },
+        )
+        restored += 1
+    if restored:
+        logger.info("Restored %d scheduled job(s) from persistent settings", restored)
 
 
 def main() -> None:
@@ -2206,6 +2267,7 @@ def main() -> None:
         Application.builder()
         .token(TOKEN)
         .request(request)
+        .post_init(_restore_schedules)  # BUG-61: restore scheduled jobs on startup
         .build()
     )
 
