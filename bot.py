@@ -1738,7 +1738,8 @@ def main() -> None:
         connect_timeout=15.0,
         read_timeout=30.0,
         write_timeout=60.0,      # large video uploads need time
-        pool_timeout=10.0,
+        pool_timeout=60.0,       # increased to wait longer for an available connection
+        connection_pool_size=200 # increased pool size to allow more concurrent uploads
     )
     app = (
         Application.builder()
