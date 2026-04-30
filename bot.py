@@ -493,6 +493,8 @@ def kb_main() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🍪 Set cookies",   callback_data="m_cookies"),
          InlineKeyboardButton("📊 Status",        callback_data="m_status")],
         [InlineKeyboardButton("📡 Set channel",   callback_data="m_channel"),
+         InlineKeyboardButton("⏰ Schedule",       callback_data="m_schedule")],
+        [InlineKeyboardButton("📎 Export sources", callback_data="m_export"),
          InlineKeyboardButton("🗑️ Free disk",     callback_data="m_cleanup")],
     ])
 
@@ -995,6 +997,8 @@ async def realtime_download(
                             pass
                         if len(buffer) >= MEDIA_GROUP_MAX:
                             await drain()
+                            if status:
+                                await status.set(f"📦 `{handle}` › {sent_count} file(s) sent…")
                 else:
                     await asyncio.sleep(0.5)  # nothing new — yield before next poll
             else:
@@ -1153,6 +1157,8 @@ async def do_download(msg, choice: str, uid: int, uname: str,
         await status.set(final, force=True)
     finally:
         _release(uid, stop)
+        # Feature: auto-cleanup — free disk after every download run
+        wipe_downloads(uid)
         await send_menu(msg, uid, uname, name)
 
 
@@ -1195,6 +1201,8 @@ async def do_special_download(msg, url: str, platform: str, mode: str,
             await status.set(f"✅ *Done!* {n} file(s) sent.", force=True)
     finally:
         _release(uid, stop)
+        # Feature: auto-cleanup — free disk after every download run
+        wipe_downloads(uid)
         await send_menu(msg, uid, uname, name)
 
 
@@ -1329,6 +1337,24 @@ async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
             break
 
     if not matched:
+        # Check if it's a source import file
+        if fname in ("cuhibot_sources.txt", "sources.txt"):
+            try:
+                tg_file = await doc.get_file()
+                raw = await tg_file.download_as_bytearray()
+                text_content = raw.decode("utf-8", errors="replace")
+                added, skipped = _import_sources(uid, text_content)
+                await update.message.reply_text(
+                    f"📋 *Import complete!*\n"
+                    f"• Added: {added} source(s)\n"
+                    f"• Skipped: {skipped} (duplicates, invalid, or limit reached)",
+                    parse_mode="Markdown",
+                )
+                await send_menu(update.message, uid, uname, name)
+            except Exception:
+                logger.exception("Source import failed for uid=%s", uid)
+                await update.message.reply_text("❌ Failed to import sources.")
+            return
         await update.message.reply_text(
             "⚠️ Unrecognised cookie file name.\n"
             "Expected one of:\n" +
@@ -1766,6 +1792,92 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         await send_menu(q.message, uid, uname, name)
         return
 
+    # ── schedule ──────────────────────────────────────────────────────────────
+    if data == "m_schedule":
+        s = read_settings(uid)
+        current = s.get("schedule", "off")
+        rows = [
+            [InlineKeyboardButton(
+                f"{'✅ ' if current == k else ''}{k.upper()}",
+                callback_data=f"sched_{k}",
+            )]
+            for k in SCHEDULE_OPTIONS
+        ]
+        rows.append([InlineKeyboardButton("🔙 Back", callback_data="m_back")])
+        await q.message.edit_text(
+            f"⏰ *Scheduled Auto-Download*\n\n"
+            f"Current: *{current.upper()}*\n\n"
+            "Pick an interval — the bot will automatically download\n"
+            "new media from all your sources on a timer.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(rows),
+        )
+        return
+
+    if data.startswith("sched_"):
+        interval_key = data[6:]
+        if interval_key not in SCHEDULE_OPTIONS:
+            return
+
+        # Remove any existing scheduled job for this user
+        job_name = f"schedule_{uid}"
+        current_jobs = ctx.application.job_queue.get_jobs_by_name(job_name)
+        for job in current_jobs:
+            job.schedule_removal()
+
+        s = read_settings(uid)
+        s["schedule"] = interval_key
+        write_settings(uid, s)
+
+        if interval_key == "off":
+            await q.message.reply_text("⏰ Scheduled download *disabled*.", parse_mode="Markdown")
+        else:
+            interval = SCHEDULE_OPTIONS[interval_key]
+            ctx.application.job_queue.run_repeating(
+                _scheduled_job,
+                interval=interval,
+                first=interval,
+                name=job_name,
+                data={
+                    "uid": uid,
+                    "chat_id": q.message.chat_id,
+                    "uname": uname,
+                    "name": name,
+                },
+            )
+            await q.message.reply_text(
+                f"⏰ Scheduled download set to *every {interval_key}*.",
+                parse_mode="Markdown",
+            )
+        await send_menu(q.message, uid, uname, name)
+        return
+
+    # ── export sources (button) ──────────────────────────────────────────────
+    if data == "m_export":
+        lines: list[str] = []
+        for p in PLATFORMS:
+            urls = read_profiles(uid, p)
+            if urls:
+                lines.append(f"# {p.upper()}")
+                lines.extend(urls)
+                lines.append("")
+        if not lines:
+            await q.message.reply_text("ℹ️ No sources to export.")
+            return
+        content = "\n".join(lines)
+        export_file = udir(uid) / "cuhibot_sources.txt"
+        export_file.write_text(content, encoding="utf-8")
+        try:
+            with open(export_file, "rb") as fh:
+                await q.message.reply_document(
+                    document=fh,
+                    filename="cuhibot_sources.txt",
+                    caption="📎 Your sources — re-upload this file to import.",
+                )
+        finally:
+            export_file.unlink(missing_ok=True)
+        return
+
 
 # =============================================================================
 # 12. MAIN
@@ -1824,6 +1936,249 @@ async def cmd_admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
+# ── /link — single post download ─────────────────────────────────────────────
+
+def _detect_platform(url: str) -> str | None:
+    """Detect which platform a URL belongs to by checking its domain."""
+    try:
+        domain = urlparse(url).netloc.lower()
+    except Exception:
+        return None
+    for plat, domains in PLATFORM_DOMAINS.items():
+        if any(domain == d or domain.endswith('.' + d) for d in domains):
+            return plat
+    return None
+
+
+async def cmd_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """/link <url> — download a single post immediately without adding it as a source."""
+    uid, uname, name = _user(update)
+    if not _is_allowed(uid):
+        await update.message.reply_text("🔒 Access denied.")
+        return
+
+    if not ctx.args:
+        await update.message.reply_text(
+            "📎 *Usage:* `/link <url>`\n\n"
+            "Example:\n`/link https://www.instagram.com/p/ABC123/`",
+            parse_mode="Markdown",
+        )
+        return
+
+    url = ctx.args[0].strip()
+    platform = _detect_platform(url)
+    if not platform:
+        await update.message.reply_text(
+            "❌ URL not recognized. Supported: Instagram, TikTok, Facebook, X."
+        )
+        return
+
+    ok, err = validate_url(url, platform)
+    if not ok:
+        await update.message.reply_text(f"❌ {err}")
+        return
+
+    if uid in ACTIVE_USERS:
+        await update.message.reply_text("⚠️ A download is already running. Tap 🚫 Stop first.")
+        return
+
+    allowed, remaining = _check_rate_limit(uid)
+    if not allowed:
+        await update.message.reply_text(f"⏳ Please wait {remaining}s before starting another download.")
+        return
+
+    _record_download_time(uid)
+
+    handle = handle_from_url(url)
+    ch = get_channel(uid)
+    target = (ctx.bot, ch) if ch else update.message
+    cookie = resolve_cookie(uid, platform)
+    _, _, sleep = PLATFORMS[platform]
+
+    first = await update.message.reply_text(
+        f"📎 *Downloading:* `{handle}`…", parse_mode="Markdown"
+    )
+    status = Status(first)
+
+    ev = asyncio.Event()
+    STOP_EVENTS[uid] = ev
+    ACTIVE_USERS.add(uid)
+
+    async def _do_link(stop: asyncio.Event) -> None:
+        try:
+            n = await realtime_download(
+                target=target, uid=uid, platform=platform, handle=handle,
+                mode="documents", url=url, cookie=cookie, sleep=sleep,
+                stop=stop, status=status,
+            )
+            if n > 0:
+                append_history(uid, {
+                    "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "platform": platform, "user": handle,
+                    "media": "link", "sent": n,
+                })
+            if n == 0 and not stop.is_set():
+                await status.set("ℹ️ *No media found.* (may be private or already downloaded)", force=True)
+            elif stop.is_set():
+                await status.set(f"⏹️ *Stopped.* {n} file(s) sent.", force=True)
+            else:
+                await status.set(f"✅ *Done!* {n} file(s) sent.", force=True)
+        finally:
+            _release(uid, stop)
+            wipe_downloads(uid)
+            await send_menu(update.message, uid, uname, name)
+
+    task = asyncio.create_task(_do_link(ev))
+    _TASKS.add(task)
+    task.add_done_callback(_TASKS.discard)
+
+
+# ── /export — export all sources as a text file ──────────────────────────────
+
+async def cmd_export(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """/export — send all sources as a downloadable text file."""
+    uid, uname, name = _user(update)
+    if not _is_allowed(uid):
+        await update.message.reply_text("🔒 Access denied.")
+        return
+
+    lines: list[str] = []
+    for p in PLATFORMS:
+        urls = read_profiles(uid, p)
+        if urls:
+            lines.append(f"# {p.upper()}")
+            lines.extend(urls)
+            lines.append("")
+
+    if not lines:
+        await update.message.reply_text("ℹ️ No sources to export. Add some first!")
+        return
+
+    content = "\n".join(lines)
+    export_file = udir(uid) / "cuhibot_sources.txt"
+    export_file.write_text(content, encoding="utf-8")
+    try:
+        with open(export_file, "rb") as fh:
+            await update.message.reply_document(
+                document=fh,
+                filename="cuhibot_sources.txt",
+                caption="📎 Your Cuhi Bot sources — re-upload this file to import.",
+            )
+    finally:
+        export_file.unlink(missing_ok=True)
+
+
+def _import_sources(uid: int, text: str) -> tuple[int, int]:
+    """Parse an exported sources file and import URLs. Returns (added, skipped)."""
+    added = 0
+    skipped = 0
+    current_platform: str | None = None
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        # Header like "# INSTAGRAM"
+        if line.startswith("#"):
+            tag = line.lstrip("# ").strip().lower()
+            if tag in PLATFORMS:
+                current_platform = tag
+            continue
+        # It's a URL line
+        if current_platform and _URL_RE.match(line):
+            ok, _ = validate_url(line, current_platform)
+            if not ok:
+                skipped += 1
+                continue
+            existing = read_profiles(uid, current_platform)
+            if line in existing:
+                skipped += 1
+                continue
+            if len(existing) >= MAX_PROFILES_PER_PLATFORM:
+                skipped += 1
+                continue
+            write_profiles(uid, current_platform, existing + [line])
+            added += 1
+        else:
+            skipped += 1
+
+    return added, skipped
+
+
+# ── Scheduled auto-download ──────────────────────────────────────────────────
+
+SCHEDULE_OPTIONS = {
+    "6h": 6 * 3600,
+    "12h": 12 * 3600,
+    "24h": 24 * 3600,
+    "off": 0,
+}
+
+
+async def _scheduled_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Callback fired by JobQueue. Runs a full download for the user."""
+    uid = ctx.job.data["uid"]
+    chat_id = ctx.job.data["chat_id"]
+    uname = ctx.job.data.get("uname", "unknown")
+    name = ctx.job.data.get("name", "User")
+
+    if uid in ACTIVE_USERS:
+        return  # skip if already running
+
+    if not any(read_profiles(uid, p) for p in PLATFORMS):
+        return  # no sources
+
+    ev = asyncio.Event()
+    STOP_EVENTS[uid] = ev
+    ACTIVE_USERS.add(uid)
+
+    ch = get_channel(uid)
+    target = (ctx.bot, ch) if ch else (ctx.bot, chat_id)
+
+    try:
+        first = await ctx.bot.send_message(
+            chat_id=chat_id,
+            text="⏰ *Scheduled download starting…*",
+            parse_mode="Markdown",
+        )
+        status = Status(first)
+        total = 0
+
+        for platform, (_, _, sleep) in PLATFORMS.items():
+            if ev.is_set():
+                break
+            urls = read_profiles(uid, platform)
+            if not urls:
+                continue
+            cookie = resolve_cookie(uid, platform)
+            for url in urls:
+                if ev.is_set():
+                    break
+                handle = handle_from_url(url)
+                for m in ("photos", "videos"):
+                    if ev.is_set():
+                        break
+                    n = await realtime_download(
+                        target=target, uid=uid, platform=platform,
+                        handle=handle, mode=m, url=url, cookie=cookie,
+                        sleep=sleep, stop=ev, status=status,
+                    )
+                    total += n
+                    if n > 0:
+                        append_history(uid, {
+                            "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            "platform": platform, "user": handle,
+                            "media": m, "sent": n,
+                        })
+
+        await status.set(
+            f"⏰ *Scheduled download done!* {total} file(s).", force=True
+        )
+    finally:
+        _release(uid, ev)
+        wipe_downloads(uid)
+
+
 def main() -> None:
     if TOKEN == "YOUR_BOT_TOKEN":
         logger.critical("BOT_TOKEN not set! Set the BOT_TOKEN environment variable.")
@@ -1859,6 +2214,8 @@ def main() -> None:
     app.add_handler(CommandHandler("menu",    cmd_start))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
     app.add_handler(CommandHandler("admin",   cmd_admin))
+    app.add_handler(CommandHandler("link",    cmd_link))
+    app.add_handler(CommandHandler("export",  cmd_export))
 
     # Inline buttons
     app.add_handler(CallbackQueryHandler(handle_callback))

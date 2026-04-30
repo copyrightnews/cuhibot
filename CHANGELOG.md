@@ -5,6 +5,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.3.0] — 2026-05-01
+
+### Summary
+**Feature release** — 5 new features added to make the bot fully autonomous and more user-friendly.
+
+### Added
+
+| # | Feature | Description |
+|---|---------|-------------|
+| 1 | 📎 `/link` command | Download a single post instantly — `/link <url>`. No need to add as source. Auto-detects platform. |
+| 2 | ⏰ Scheduled Auto-Download | Set 6h / 12h / 24h intervals via the ⏰ Schedule button. Bot runs downloads automatically on a timer using JobQueue. |
+| 3 | 🧹 Auto-Cleanup | Disk is automatically freed after every download completes. No more manual "Free disk" for routine use. |
+| 4 | 📎 Export/Import Sources | Export all sources as `cuhibot_sources.txt` via button or `/export`. Re-upload the file to import on any device. |
+| 5 | 📊 Live Progress Counter | Status updates now show `📦 handle › N file(s) sent…` during downloads instead of just a spinner. |
+
+---
+
 ## [1.2.6] — 2026-05-01
 
 ### Summary
