@@ -355,11 +355,23 @@ def cookie_summary(uid: int) -> str:
 
 
 def total_sent(uid: int) -> int:
+    """Return total sent files, seeding from history on first access.
+    BUG-73: uses atomic read-modify-write under lock to avoid TOCTOU races.
+    """
     s = read_settings(uid)
-    if "total_sent_files" not in s:
-        count = sum(e.get("sent", 0) for e in read_history(uid))
-        s["total_sent_files"] = count
-        write_settings(uid, s)
+    if "total_sent_files" in s:
+        return s["total_sent_files"]
+    # First call: seed from history under lock so we don't overwrite concurrent changes
+    path = settings_path(uid)
+    with locked_file(path):
+        try:
+            s = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except Exception:
+            s = {}
+        if "total_sent_files" not in s:
+            count = sum(e.get("sent", 0) for e in read_history(uid))
+            s["total_sent_files"] = count
+            path.write_text(json.dumps(s, indent=2), encoding="utf-8")
     return s.get("total_sent_files", 0)
 
 
@@ -2203,9 +2215,12 @@ async def _scheduled_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
     finally:
         _release(uid, ev)
         wipe_downloads(uid)
+
+
 async def _restore_schedules(app: Application) -> None:
     """BUG-61: Restore scheduled jobs on startup by scanning persisted settings.
     Called as Application.post_init callback after the bot is ready.
+    BUG-75: per-user try/except so one corrupt file doesn't block all restorations.
     """
     if not DATA_ROOT.exists():
         return
@@ -2214,28 +2229,31 @@ async def _restore_schedules(app: Application) -> None:
         if not user_dir.is_dir() or not user_dir.name.isdigit():
             continue
         uid = int(user_dir.name)
-        s = read_settings(uid)
-        interval_key = s.get("schedule", "off")
-        chat_id = s.get("schedule_chat_id")
-        if interval_key == "off" or interval_key not in SCHEDULE_OPTIONS or not chat_id:
-            continue
-        interval = SCHEDULE_OPTIONS[interval_key]
-        if interval <= 0:
-            continue
-        job_name = f"schedule_{uid}"
-        app.job_queue.run_repeating(
-            _scheduled_job,
-            interval=interval,
-            first=interval,
-            name=job_name,
-            data={
-                "uid": uid,
-                "chat_id": chat_id,
-                "uname": s.get("schedule_uname", "unknown"),
-                "name": s.get("schedule_name", "User"),
-            },
-        )
-        restored += 1
+        try:
+            s = read_settings(uid)
+            interval_key = s.get("schedule", "off")
+            chat_id = s.get("schedule_chat_id")
+            if interval_key == "off" or interval_key not in SCHEDULE_OPTIONS or not chat_id:
+                continue
+            interval = SCHEDULE_OPTIONS[interval_key]
+            if interval <= 0:
+                continue
+            job_name = f"schedule_{uid}"
+            app.job_queue.run_repeating(
+                _scheduled_job,
+                interval=interval,
+                first=interval,
+                name=job_name,
+                data={
+                    "uid": uid,
+                    "chat_id": chat_id,
+                    "uname": s.get("schedule_uname", "unknown"),
+                    "name": s.get("schedule_name", "User"),
+                },
+            )
+            restored += 1
+        except Exception:
+            logger.exception("Failed to restore schedule for uid=%s", uid)
     if restored:
         logger.info("Restored %d scheduled job(s) from persistent settings", restored)
 
