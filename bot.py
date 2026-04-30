@@ -1628,7 +1628,11 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
             if urls:
                 lines.append(f"*{p.capitalize()}*")
                 lines += [f"  • `{u}`" for u in urls]
+        # BUG-77: Telegram edit_text limit is 4096 chars; truncate to avoid BadRequest
+        _MAX = 3900
         text = "\n".join(lines) if lines else "ℹ️ No sources added yet."
+        if len(text) > _MAX:
+            text = text[:_MAX] + "\n…_(truncated — use 📎 Export to see all)_"
         await q.message.edit_text(text, parse_mode="Markdown", reply_markup=kb_back())
         return
 
@@ -1748,8 +1752,13 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
                 f"› `{e.get('user','-')}` | {e.get('media','-')} | "
                 f"{e.get('sent',0)} file(s)"
             )
+        # BUG-76: Telegram edit_text limit is 4096 chars; truncate to avoid BadRequest
+        _MAX = 3900
+        full_text = "\n".join(lines)
+        if len(full_text) > _MAX:
+            full_text = full_text[:_MAX] + "\n…_(truncated)_"
         await q.message.edit_text(
-            "\n".join(lines), parse_mode="Markdown", reply_markup=kb_back()
+            full_text, parse_mode="Markdown", reply_markup=kb_back()
         )
         return
 
