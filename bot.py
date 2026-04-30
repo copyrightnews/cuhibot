@@ -549,7 +549,7 @@ def render_menu(uid: int, username: str, name: str) -> str:
     safe_username = _escape_md(username)
     safe_name = _escape_md(name)
     ch = get_channel(uid)
-    ch_line   = f"\n📡 Output: *{ch}*" if ch else ""
+    ch_line   = f"\n📡 Output: *{_escape_md(str(ch))}*" if ch else ""  # BUG-83
     cached = total_downloaded_mb(uid)
     if cached >= 1024:
         disk_line = f"\n💾 Downloaded: *{round(cached / 1024, 2)} GB*"
@@ -1379,6 +1379,7 @@ async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
             "\n".join(f"  • `{v[1]}`" for v in PLATFORMS.values()),
             parse_mode="Markdown",
         )
+        await send_menu(update.message, uid, uname, name)  # BUG-81: restore menu
         return
 
     platform, cookie_name = matched
@@ -1687,6 +1688,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
             await q.message.reply_text(
                 f"⏳ Please wait {remaining}s before starting another download."
             )
+            await send_menu(q.message, uid, uname, name)  # BUG-82
             return
         _record_download_time(uid)
         start_download_task(
