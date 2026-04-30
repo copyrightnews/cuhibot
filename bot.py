@@ -42,6 +42,8 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     level=logging.INFO,
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 from telegram import (
@@ -172,7 +174,7 @@ def locked_file(target: Path):
                 raise TimeoutError(
                     f"Could not acquire lock on {target} after {max_retries} retries"
                 )
-            time.sleep(0.1)
+            time.sleep(0.001)   # BUG-A: minimal sleep; contention is near-impossible (per-user files)
 
     # Guard: if somehow fd is still None (e.g. stale-unlock exhausted retries)
     if fd is None:
@@ -362,9 +364,14 @@ def total_sent(uid: int) -> int:
 def add_sent_files(uid: int, count: int) -> None:
     if count <= 0:
         return
-    s = read_settings(uid)
-    s["total_sent_files"] = s.get("total_sent_files", 0) + count
-    write_settings(uid, s)
+    path = settings_path(uid)
+    with locked_file(path):  # BUG-D: atomic read-modify-write under lock
+        try:
+            s = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except Exception:
+            s = {}
+        s["total_sent_files"] = s.get("total_sent_files", 0) + count
+        path.write_text(json.dumps(s, indent=2), encoding="utf-8")
 
 
 def total_downloaded_mb(uid: int) -> float:
@@ -376,9 +383,14 @@ def add_downloaded_bytes(uid: int, nbytes: int) -> None:
     """Increment cumulative downloaded-byte counter in settings."""
     if nbytes <= 0:
         return
-    s = read_settings(uid)
-    s["total_bytes"] = s.get("total_bytes", 0) + nbytes
-    write_settings(uid, s)
+    path = settings_path(uid)
+    with locked_file(path):  # BUG-D: atomic read-modify-write under lock
+        try:
+            s = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except Exception:
+            s = {}
+        s["total_bytes"] = s.get("total_bytes", 0) + nbytes
+        path.write_text(json.dumps(s, indent=2), encoding="utf-8")
 
 
 # =============================================================================
@@ -752,24 +764,6 @@ async def flush(target, batch: list[Path], send_as: str) -> int:
 
         else:
             for chunk in _split_mixed(batch):
-                chunk_bytes = 0
-                for f in chunk:
-                    try:
-                        chunk_bytes += f.stat().st_size if f.exists() else 0
-                    except OSError:
-                        pass
-                if chunk_bytes > TELEGRAM_FILE_LIMIT:
-                    logger.info(
-                        "Chunk %.1f MB exceeds 50 MB — sending %d files individually",
-                        chunk_bytes / (1024 * 1024), len(chunk),
-                    )
-                    for f in chunk:
-                        kind = {"photos": "photo", "videos": "video"}.get(send_as) or file_kind(f)
-                        if await _send_one(target, f, kind):
-                            sent += 1
-                            sent_files.append(f)
-                    continue
-
                 for _retries in range(5):
                     file_handles: list = []
                     try:
@@ -909,6 +903,23 @@ async def realtime_download(
         stderr=asyncio.subprocess.PIPE,   # capture so we can log errors
     )
 
+    # BUG-B: drain stderr continuously to prevent deadlock if gallery-dl writes >64KB of errors
+    stderr_buf = bytearray()
+    async def _drain_stderr():
+        if not proc.stderr: return
+        try:
+            while True:
+                chunk = await proc.stderr.read(4096)
+                if not chunk:
+                    break
+                stderr_buf.extend(chunk)
+                if len(stderr_buf) > 1024 * 1024:
+                    del stderr_buf[:-512*1024]
+        except Exception:
+            pass
+    
+    stderr_task = asyncio.create_task(_drain_stderr())
+
     seen: set[Path] = set()
     buffer: list[Path] = []
     sent_count = 0
@@ -1026,16 +1037,15 @@ async def realtime_download(
                 await asyncio.wait_for(proc.wait(), timeout=5)
             except Exception:
                 pass
-        # Read any remaining stderr for logging (non-blocking read of buffered data)
+        # BUG-B: cancel the drain task and log collected stderr
+        stderr_task.cancel()
         try:
-            if proc.stderr:
-                stderr_bytes = await asyncio.wait_for(proc.stderr.read(), timeout=3)
-                if stderr_bytes and stderr_bytes.strip():
-                    logger.warning(
-                        "gallery-dl stderr [%s/%s]: %s",
-                        platform, handle,
-                        stderr_bytes.decode(errors="replace").strip(),
-                    )
+            if stderr_buf:
+                logger.warning(
+                    "gallery-dl stderr [%s/%s]: %s",
+                    platform, handle,
+                    stderr_buf.decode(errors="replace").strip(),
+                )
         except Exception:
             pass
 
@@ -1732,8 +1742,8 @@ def bootstrap_env_cookies() -> None:
         if not value:
             continue
         dest = dest_dir / cookie_filename
-        if dest.exists():
-            continue          # don't overwrite a manually uploaded file
+        # BUG-E: always write from env var — env vars are the source of truth on Railway.
+        # Per-user uploaded cookies in cdir() take priority at runtime via resolve_cookie().
         # Detect base64: use strict validation to avoid false positives
         try:
             decoded = base64.b64decode(value, validate=True).decode("utf-8")
