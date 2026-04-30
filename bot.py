@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import urlparse
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -411,8 +412,15 @@ def validate_url(url: str, platform: str) -> tuple[bool, str]:
         return False, "URL contains invalid characters."
     if any(pat in url for pat in (';', '`', '|', '$', '&&')):
         return False, "URL contains invalid characters."
+    
+    try:
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+    except Exception:
+        return False, "Malformed URL."
+
     allowed = PLATFORM_DOMAINS[platform]
-    if not any(dom in url.lower() for dom in allowed):
+    if not any(domain == dom or domain.endswith('.' + dom) for dom in allowed):
         return False, f"URL must belong to: {', '.join(allowed)}"
     return True, ""
 
@@ -580,9 +588,8 @@ class Status:
             self.last_at = time.monotonic()
             self.last_text = text
         except RetryAfter as exc:
-            # Wait the required time; update last_at so we don't immediately retry
-            await asyncio.sleep(exc.retry_after + 0.5)
-            self.last_at = time.monotonic()
+            # Don't sleep and block the orchestrator; just defer future updates
+            self.last_at = time.monotonic() + exc.retry_after
         except BadRequest:
             pass
         except Exception:
@@ -953,6 +960,7 @@ async def realtime_download(
                 pass  # still running, continue polling
 
             if out_dir.exists():
+                new_files = []
                 for f in sorted(out_dir.iterdir()):
                     if f in seen or not f.is_file():
                         continue
@@ -960,24 +968,35 @@ async def realtime_download(
                         continue
                     if f.name.endswith(('.part', '.ytdl', '.tmp')):
                         continue
-                    # only process files that aren't still being written
-                    try:
-                        s1 = f.stat().st_size
-                        await asyncio.sleep(0.5)
-                        s2 = f.stat().st_size
-                        if s1 != s2:
+                    new_files.append(f)
+                
+                if new_files:
+                    sizes1 = {}
+                    for f in new_files:
+                        try:
+                            sizes1[f] = f.stat().st_size
+                        except OSError:
+                            pass
+                    
+                    await asyncio.sleep(0.5)
+                    
+                    for f in new_files:
+                        try:
+                            s2 = f.stat().st_size
+                            s1 = sizes1.get(f)
+                            if s1 is None or s1 != s2:
+                                continue
+                        except OSError:
                             continue
-                    except Exception:
-                        continue
 
-                    seen.add(f)
-                    buffer.append(f)
-                    try:
-                        downloaded_bytes += f.stat().st_size
-                    except OSError:
-                        pass
-                    if len(buffer) >= MEDIA_GROUP_MAX:
-                        await drain()
+                        seen.add(f)
+                        buffer.append(f)
+                        try:
+                            downloaded_bytes += f.stat().st_size
+                        except OSError:
+                            pass
+                        if len(buffer) >= MEDIA_GROUP_MAX:
+                            await drain()
 
             if proc.returncode is not None:
                 # Process exited — drain remaining buffer and exit loop
