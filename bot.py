@@ -331,12 +331,18 @@ def get_channel(uid: int):
 
 
 def set_channel(uid: int, value) -> None:
-    s = read_settings(uid)
-    if value in (None, "", "clear"):
-        s.pop("channel", None)
-    else:
-        s["channel"] = value
-    write_settings(uid, s)
+    """BUG-78: atomic RMW under lock to avoid overwriting concurrent counter updates."""
+    path = settings_path(uid)
+    with locked_file(path):
+        try:
+            s = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except Exception:
+            s = {}
+        if value in (None, "", "clear"):
+            s.pop("channel", None)
+        else:
+            s["channel"] = value
+        path.write_text(json.dumps(s, indent=2), encoding="utf-8")
 
 
 def total_profiles(uid: int) -> int:              # BUG-16
@@ -1584,10 +1590,19 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
                 parse_mode="Markdown", reply_markup=kb_back(),
             )
             return
+        # BUG-79: Telegram has a 64KB InlineKeyboardMarkup limit.
+        # Long URLs as button labels can exceed it — cap at 30 entries.
+        _MAX_BUTTONS = 30
+        display_urls = urls[:_MAX_BUTTONS]
         rows = [
-            [InlineKeyboardButton(f"❌ {u}", callback_data=f"del_{platform}_{i}")]
-            for i, u in enumerate(urls)
+            [InlineKeyboardButton(f"❌ {u[:60]}", callback_data=f"del_{platform}_{i}")]
+            for i, u in enumerate(display_urls)
         ]
+        if len(urls) > _MAX_BUTTONS:
+            rows.append([InlineKeyboardButton(
+                f"⚠️ {len(urls) - _MAX_BUTTONS} more — use 📎 Export to manage",
+                callback_data="m_back",
+            )])
         rows.append([InlineKeyboardButton("🔙 Back", callback_data="m_back")])
         await q.message.edit_text(
             f"🚫 *{platform.capitalize()}* sources — tap to remove:",
@@ -1893,14 +1908,17 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
             return
         content = "\n".join(lines)
         export_file = udir(uid) / "cuhibot_sources.txt"
-        export_file.write_text(content, encoding="utf-8")
+        # BUG-80: write_text was outside try — if disk full, OSError was uncaught
         try:
+            export_file.write_text(content, encoding="utf-8")
             with open(export_file, "rb") as fh:
                 await q.message.reply_document(
                     document=fh,
                     filename="cuhibot_sources.txt",
                     caption="📎 Your sources — re-upload this file to import.",
                 )
+        except OSError:
+            await q.message.reply_text("❌ Export failed — disk may be full. Tap 🗑️ Free disk first.")
         finally:
             export_file.unlink(missing_ok=True)
         return
@@ -2083,14 +2101,17 @@ async def cmd_export(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     content = "\n".join(lines)
     export_file = udir(uid) / "cuhibot_sources.txt"
-    export_file.write_text(content, encoding="utf-8")
+    # BUG-80: write_text was outside try — if disk full, OSError was uncaught
     try:
+        export_file.write_text(content, encoding="utf-8")
         with open(export_file, "rb") as fh:
             await update.message.reply_document(
                 document=fh,
                 filename="cuhibot_sources.txt",
                 caption="📎 Your Cuhi Bot sources — re-upload this file to import.",
             )
+    except OSError:
+        await update.message.reply_text("❌ Export failed — disk may be full. Use /cleanup first.")
     finally:
         export_file.unlink(missing_ok=True)
 
