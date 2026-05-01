@@ -1773,10 +1773,8 @@ async def handle_callback(
 
     if data == "m_status":
         dl_mb = total_downloaded_mb(uid)
-        dl_str = f"{
-            round(
-                dl_mb / 1024,
-                2)} GB" if dl_mb >= 1024 else f"{dl_mb} MB"
+        dl_val = round(dl_mb / 1024, 2)
+        dl_str = f"{dl_val} GB" if dl_mb >= 1024 else f"{dl_mb} MB"
         active = "▶️ Running" if uid in ACTIVE_USERS else "⏸️ Idle"
         ch = get_channel(uid) or "Direct chat"
         text = (
