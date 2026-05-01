@@ -7,25 +7,25 @@
 </p>
 
 <p align="center">
+  <a href="#the-vision">Vision</a> •
   <a href="#features">Features</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#deployment">Deployment</a> •
-  <a href="#environment-variables">Configuration</a> •
   <a href="#security">Security</a> •
   <a href="#commands">Commands</a> •
   <a href="CHANGELOG.md">Changelog</a> •
-  <a href="#authors">Authors</a> •
-  <a href="#license">License</a>
+  <a href="ROADMAP.md">Roadmap</a> •
+  <a href="#authors">Authors</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.3.1-brightgreen?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/version-1.3.2-brightgreen?style=flat-square" alt="Version" />
   <img src="https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
   <img src="https://img.shields.io/badge/telegram--bot-22.1-26A5E4?style=flat-square&logo=telegram&logoColor=white" alt="python-telegram-bot" />
   <img src="https://img.shields.io/badge/gallery--dl-1.32-orange?style=flat-square" alt="gallery-dl" />
   <img src="https://img.shields.io/badge/yt--dlp-latest-red?style=flat-square" alt="yt-dlp" />
   <img src="https://img.shields.io/badge/deploy-Railway-0B0D0E?style=flat-square&logo=railway&logoColor=white" alt="Railway" />
-  <img src="https://img.shields.io/badge/bugs_fixed-73-critical?style=flat-square" alt="Bugs Fixed" />
+  <img src="https://img.shields.io/badge/bugs_fixed-78-critical?style=flat-square" alt="Bugs Fixed" />
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" />
 </p>
 
@@ -34,6 +34,22 @@
     <img src="https://img.shields.io/badge/Telegram_Channel-@copyrightnews-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram Channel" />
   </a>
 </p>
+
+---
+
+## 🚀 The Vision
+
+**Cuhi Bot** was built to solve a single problem: the lack of a **reliable**, **private**, and **production-grade** tool for media preservation. While many bots exist, most suffer from rate limits, data corruption, or lack of transparency. 
+
+Our goal is to provide a "set and forget" solution that empowers users to aggregate their favorite content into their own Telegram channels with **zero friction** and **100% reliability**.
+
+## 💎 Why Cuhi Bot?
+
+- **Zero Corruption**: Every profile write and setting change is atomic. We use OS-level file locking to ensure your data is safe even under heavy concurrent load.
+- **Real-Time Delivery**: Unlike other bots that make you wait, Cuhi Bot streams media to your Telegram chat *as it downloads*.
+- **Hardened for Production**: After **17 rigorous audit passes** and **78 bugs squashed**, this codebase is designed for 24/7 uptime on platforms like Railway.
+- **Privacy First**: Self-host it, own your data, and manage your own cookies. No third-party servers see your sessions.
+
 
 ---
 
@@ -241,43 +257,33 @@ The bot auto-detects and saves cookies for the correct platform.
 | Container | Docker (python:3.11-slim + ffmpeg) |
 | Hosting | [Railway](https://railway.app) |
 
-## Project Structure
+## 🗺️ Roadmap
 
-```
-.
-├── bot.py              # Main bot source (single-file architecture)
-├── Dockerfile          # Production container image
-├── requirements.txt    # Python dependencies
-├── CHANGELOG.md        # Full history of all bug fixes and releases
-├── SECURITY.md         # Security policy and vulnerability reporting
-├── CONTRIBUTING.md     # Contribution guidelines
-├── CODE_OF_CONDUCT.md  # Community code of conduct
-├── LICENSE             # MIT License
-├── .gitignore          # Git ignore rules
-└── README.md           # This file
-```
+We are constantly evolving. Here is a glimpse of what's coming:
+- [ ] **Multi-account rotation** for higher throughput.
+- [ ] **Web Dashboard** for managing sources via browser.
+- [ ] **Plugin System** for custom post-processing.
+- [ ] **Automated Integration Tests** for zero-regression updates.
 
-## Authors
+See [ROADMAP.md](ROADMAP.md) for the full details.
+
+## 👥 Authors
 
 | | Name | Role | Links |
 |---|---|---|---|
-| <a href="https://github.com/ebnycuhie"><img src="https://github.com/ebnycuhie.png" width="50" /></a> | **ebnycuhie** | Creator, Maintainer | [GitHub](https://github.com/ebnycuhie) · [Telegram](https://t.me/ebnycuhie) · [Instagram](https://instagram.com/ebnycuhie) |
-| <a href="https://github.com/sayfalse"><img src="https://github.com/sayfalse.png" width="50" /></a> | **sayfalse** | Creator, Maintainer | [GitHub](https://github.com/sayfalse) · [Telegram](https://t.me/sayfalsex) · [Instagram](https://instagram.com/sudoflame) |
+| <a href="https://github.com/ebnycuhie"><img src="https://github.com/ebnycuhie.png" width="50" /></a> | **ebnycuhie** | Creator, Maintainer | [GitHub](https://github.com/ebnycuhie) · [Telegram](https://t.me/ebnycuhie) |
+| <a href="https://github.com/sayfalse"><img src="https://github.com/sayfalse.png" width="50" /></a> | **sayfalse** | Creator, Maintainer | [GitHub](https://github.com/sayfalse) · [Telegram](https://t.me/sayfalsex) |
 
 See all [contributors](https://github.com/copyrightnews/cuhibot/graphs/contributors).
 
-## Contributing
+## 🤝 Contributing
 
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+We love contributions! Whether it's a bug fix, feature request, or documentation improvement, please see [CONTRIBUTING.md](CONTRIBUTING.md) to get started.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community standards.
+## 🛡️ Security
 
-## Support
+Security is a top priority. Please review our [Security Policy](SECURITY.md) for details on how we protect your data and how to report vulnerabilities.
 
-- 📢 **Telegram** — [@copyrightnews](https://t.me/copyrightnews)
-- 🐛 **Bug reports** — [GitHub Issues](https://github.com/copyrightnews/cuhibot/issues)
-- 🔒 **Security** — See [SECURITY.md](SECURITY.md) for responsible disclosure
+## ⚖️ License
 
-## License
-
-[MIT](LICENSE) © 2026 ebnycuhie & sayfalse
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.

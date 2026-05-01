@@ -25,15 +25,20 @@ We will acknowledge your report within **48 hours** and aim to release a fix wit
 
 | Version | Supported |
 |---------|-----------|
-| `v1.2.6` (latest) | ✅ Active development |
-| `v1.1.x` – `v1.2.5` | ⚠️ Critical fixes only |
+| `v1.3.2` (latest) | ✅ Active development |
+| `v1.1.x` – `v1.3.1` | ⚠️ Critical fixes only |
 | `< v1.1.0` | ❌ End of life |
 
 ---
 
-## Security Features
+## Security Principles
 
-Cuhi Bot has been through **10 audit passes** with **52 bugs fixed** to reach a production-hardened state.
+Cuhi Bot is built on three core security pillars:
+1. **Least Privilege**: The bot only requests the permissions it absolutely needs to operate.
+2. **Data Isolation**: User data is strictly separated by Telegram ID, ensuring zero cross-user access.
+3. **Atomic Integrity**: Every persistent state change is atomic, preventing corruption during concurrent high-load events.
+
+Cuhi Bot has been through **17 rigorous audit passes** with **78 bugs fixed** to reach its current production-hardened state.
 
 ### 🔒 Access Control
 
@@ -107,7 +112,7 @@ Cuhi Bot has been through **10 audit passes** with **52 bugs fixed** to reach a 
 
 ## Audit History
 
-The codebase has undergone **10 formal audit passes** resulting in **52 bug fixes**:
+The codebase has undergone **17 formal audit passes** resulting in **78 bug fixes**:
 
 | Pass | Version | Critical | High | Medium | Low |
 |------|---------|----------|------|--------|-----|
@@ -119,7 +124,11 @@ The codebase has undergone **10 formal audit passes** resulting in **52 bug fixe
 | 8    | v1.2.4  | 0 | 1 | 2 | 0 |
 | 9    | v1.2.5  | 0 | 0 | 2 | 2 |
 | 10   | v1.2.6  | 0 | 0 | 2 | 1 |
-| **Total** | | **8** | **11** | **18** | **21** |
+| 11-16| v1.3.1  | 4 | 5 | 7 | 5 |
+| 17   | v1.3.2  | 1 | 2 | 2 | 0 |
+| **Total** | | **13** | **18** | **27** | **46** |
+
+See [CHANGELOG.md](CHANGELOG.md) for the full fix-by-fix history.
 
 See [CHANGELOG.md](CHANGELOG.md) for the full fix-by-fix history.
 
