@@ -2102,11 +2102,11 @@ async def cmd_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     async def _do_link(stop: asyncio.Event) -> None:
         try:
-                n = await realtime_download(
-                    target=target, uid=uid, platform=platform, handle=handle,
-                    mode="documents", url=url, cookie=cookie, sleep=sleep,
-                    stop=stop, status=status, ignore_archive=True,
-                )
+            n = await realtime_download(
+                target=target, uid=uid, platform=platform, handle=handle,
+                mode="documents", url=url, cookie=cookie, sleep=sleep,
+                stop=stop, status=status, ignore_archive=True,
+            )
             if n > 0:
                 append_history(uid, {
                     "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
