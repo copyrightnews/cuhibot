@@ -269,10 +269,33 @@ See [ROADMAP.md](ROADMAP.md) for the full details.
 
 ## 👥 Authors
 
-| | Name | Role | Links |
-|---|---|---|---|
-| <a href="https://github.com/ebnycuhie"><img src="https://github.com/ebnycuhie.png" width="50" /></a> | **ebnycuhie** | Creator, Maintainer | [GitHub](https://github.com/ebnycuhie) · [Telegram](https://t.me/ebnycuhie) |
-| <a href="https://github.com/sayfalse"><img src="https://github.com/sayfalse.png" width="50" /></a> | **sayfalse** | Creator, Maintainer | [GitHub](https://github.com/sayfalse) · [Telegram](https://t.me/sayfalsex) |
+<p align="center">
+  <a href="https://github.com/ebnycuhie">
+    <img src="https://github.com/ebnycuhie.png" width="120" style="border-radius: 50%;" alt="ebnycuhie"/>
+  </a>
+  <br />
+  <a href="https://github.com/ebnycuhie"><b>ebnycuhie</b></a>
+  <br />
+  Creator & Maintainer
+  <br />
+  <a href="https://github.com/ebnycuhie"><img src="https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoColor=white" /></a>
+  <a href="https://t.me/ebnycuhie"><img src="https://img.shields.io/badge/Telegram-26A5E4?style=flat-square&logo=telegram&logoColor=white" /></a>
+</p>
+
+<br />
+
+<p align="center">
+  <a href="https://github.com/sayfalse">
+    <img src="https://github.com/sayfalse.png" width="120" style="border-radius: 50%;" alt="sayfalse"/>
+  </a>
+  <br />
+  <a href="https://github.com/sayfalse"><b>sayfalse</b></a>
+  <br />
+  Creator & Maintainer
+  <br />
+  <a href="https://github.com/sayfalse"><img src="https://img.shields.io/badge/GitHub-181717?style=flat-square&logo=github&logoColor=white" /></a>
+  <a href="https://t.me/sayfalsex"><img src="https://img.shields.io/badge/Telegram-26A5E4?style=flat-square&logo=telegram&logoColor=white" /></a>
+</p>
 
 See all [contributors](https://github.com/copyrightnews/cuhibot/graphs/contributors).
 
