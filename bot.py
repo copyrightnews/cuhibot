@@ -1240,7 +1240,7 @@ async def do_download(msg, choice: str, uid: int, uname: str,
 
         elapsed = int((datetime.now() - started).total_seconds())
         if total == 0 and not stop.is_set():
-            final = "ℹ️ *No new media found.*"
+            final = "🚫 *No new media found.*"
         elif stop.is_set():
             final = f"🚫 *Stopped.* {total} file(s) in {elapsed}s."
         else:
@@ -1283,7 +1283,7 @@ async def do_special_download(msg, url: str, platform: str, mode: str,
                 "sent": n,
             })
         if n == 0 and not stop.is_set():
-            await status.set("ℹ️ *No new media found.*", force=True)
+            await status.set("🚫 *No new media found.*", force=True)
         elif stop.is_set():
             await status.set(f"🚫 *Stopped.* {n} file(s) sent.", force=True)
         else:
@@ -1487,7 +1487,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
         existing = await read_profiles(uid, platform)
         if text in existing:
-            await update.message.reply_text("ℹ️ That URL is already in your list.")
+            await update.message.reply_text("🚫 That URL is already in your list.")
         elif len(existing) >= MAX_PROFILES_PER_PLATFORM:
             await update.message.reply_text(f"⚠️ Limit reached.")
         else:
@@ -1574,7 +1574,7 @@ async def handle_callback(
         if platform not in PLATFORMS: return
         urls = await read_profiles(uid, platform)
         if not urls:
-            await q.message.edit_text(f"ℹ️ No sources for *{platform.capitalize()}*.", parse_mode="Markdown", reply_markup=kb_back())
+            await q.message.edit_text(f"🚫 No sources for *{platform.capitalize()}*.", parse_mode="Markdown", reply_markup=kb_back())
             return
         rows = [[InlineKeyboardButton(f"❌ {u[:60]}", callback_data=f"del_{platform}_{i}")] for i, u in enumerate(urls[:30])]
         rows.append([InlineKeyboardButton("🔙 Back", callback_data="m_back")])
@@ -1603,7 +1603,7 @@ async def handle_callback(
             if urls:
                 lines.append(f"*{p.capitalize()}*")
                 lines += [f"  • `{u}`" for u in urls]
-        text = "\n".join(lines) if lines else "ℹ️ No sources added yet."
+        text = "\n".join(lines) if lines else "🚫 No sources added yet."
         await q.message.edit_text(text[:3900], parse_mode="Markdown", reply_markup=kb_back())
         return
 
@@ -1652,7 +1652,7 @@ async def handle_callback(
     if data == "m_history":
         entries = await read_history(uid)
         lines = [f"📅 `{e.get('date')}` | *{e.get('platform')}* › `{e.get('user')}` | {e.get('sent')} file(s)" for e in entries[:20]]
-        await q.message.edit_text("\n".join(lines)[:3900] if lines else "ℹ️ No history.", parse_mode="Markdown", reply_markup=kb_back())
+        await q.message.edit_text("\n".join(lines)[:3900] if lines else "🚫 No history.", parse_mode="Markdown", reply_markup=kb_back())
         return
 
     if data == "m_cookies":
