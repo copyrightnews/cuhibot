@@ -1738,6 +1738,95 @@ async def handle_callback(
 
 
 # =============================================================================
+
+# Handlers for bot features via commands
+
+async def cmd_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    uid, uname, name = _user(update)
+    if not _is_allowed(uid): return
+    await update.message.reply_text("➕ *Add source* — pick a platform:", parse_mode="Markdown", reply_markup=kb_platforms("add"))
+
+async def cmd_remove(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    uid, uname, name = _user(update)
+    if not _is_allowed(uid): return
+    await update.message.reply_text("🚫 *Remove source* — pick a platform:", parse_mode="Markdown", reply_markup=kb_platforms("rem"))
+
+async def cmd_list(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    uid, uname, name = _user(update)
+    if not _is_allowed(uid): return
+    lines: list[str] = []
+    for p in PLATFORMS:
+        urls = await read_profiles(uid, p)
+        if urls:
+            lines.append(f"*{p.capitalize()}*")
+            lines += [f"  • `{u}`" for u in urls]
+    text = "\n".join(lines) if lines else "🚫 No sources added yet."
+    await update.message.reply_text(text[:3900], parse_mode="Markdown", reply_markup=kb_back())
+
+async def cmd_run(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    uid, uname, name = _user(update)
+    if not _is_allowed(uid): return
+    if uid in ACTIVE_USERS:
+        await update.message.reply_text("⚠️ A download is already running.")
+        return
+    await update.message.reply_text("✅ *Run download* — choose media type:", parse_mode="Markdown", reply_markup=kb_media())
+
+async def cmd_stories(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    uid, uname, name = _user(update)
+    if not _is_allowed(uid): return
+    rows = [[InlineKeyboardButton("Instagram", callback_data="story_instagram")], [InlineKeyboardButton("🔙 Back", callback_data="m_back")]]
+    await update.message.reply_text("📖 *Stories* — pick a platform:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+
+async def cmd_highlights(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    uid, uname, name = _user(update)
+    if not _is_allowed(uid): return
+    rows = [[InlineKeyboardButton("Instagram", callback_data="hl_instagram")], [InlineKeyboardButton("🔙 Back", callback_data="m_back")]]
+    await update.message.reply_text("✨ *Highlights* — pick a platform:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+
+async def cmd_stop(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    uid, uname, name = _user(update)
+    if not _is_allowed(uid): return
+    ev = STOP_EVENTS.get(uid)
+    if ev:
+        ev.set()
+        await update.message.reply_text("🛑 Stop signal sent.")
+    else:
+        await update.message.reply_text("ℹ️ No active download to stop.")
+
+async def cmd_history(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    uid, uname, name = _user(update)
+    if not _is_allowed(uid): return
+    entries = await read_history(uid)
+    lines = [f"📅 `{e.get('date')}` | *{e.get('platform')}* › `{e.get('user')}` | {e.get('sent')} file(s)" for e in entries[:20]]
+    await update.message.reply_text("\n".join(lines)[:3900] if lines else "🚫 No history.", parse_mode="Markdown", reply_markup=kb_back())
+
+async def cmd_cookies(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    uid, uname, name = _user(update)
+    if not _is_allowed(uid): return
+    await update.message.reply_text("🍪 *Set cookies*\n\nUpload a Netscape `.txt` file.", parse_mode="Markdown", reply_markup=kb_back())
+
+async def cmd_status(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    uid, uname, name = _user(update)
+    if not _is_allowed(uid): return
+    text = await render_menu(uid, uname, name)
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=kb_back())
+
+async def cmd_channel(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    uid, uname, name = _user(update)
+    if not _is_allowed(uid): return
+    ctx.user_data["state"] = S_SET_CHANNEL
+    await update.message.reply_text("📡 *Set output channel*\nSend the channel ID or @username:", parse_mode="Markdown", reply_markup=kb_back())
+
+async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    uid, uname, name = _user(update)
+    if not _is_allowed(uid): return
+    s = await read_settings(uid)
+    current = s.get("schedule", "off")
+    rows = [[InlineKeyboardButton(f"{'✅ ' if current == k else ''}{k.upper()}", callback_data=f"sched_{k}")] for k in SCHEDULE_OPTIONS]
+    rows.append([InlineKeyboardButton("🔙 Back", callback_data="m_back")])
+    await update.message.reply_text(f"⏰ *Scheduled Download*\n\nCurrent: *{current.upper()}*", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+
+
 # 12. MAIN & SUPPORTING FUNCTIONS
 # =============================================================================
 
@@ -1896,18 +1985,40 @@ def main() -> None:
     bootstrap_env_cookies()
     request = HTTPXRequest(connect_timeout=15.0, read_timeout=30.0, write_timeout=60.0, pool_timeout=60.0, connection_pool_size=200)
     app = Application.builder().token(TOKEN).request(request).post_init(_restore_schedules).build()
+    
+    # Navigation & Core
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("menu", cmd_start))
-    app.add_handler(CommandHandler("cleanup", cmd_cleanup))
-    app.add_handler(CommandHandler("admin", cmd_admin))
+    app.add_handler(CommandHandler("status", cmd_status))
+    
+    # Management
+    app.add_handler(CommandHandler("add", cmd_add))
+    app.add_handler(CommandHandler("remove", cmd_remove))
+    app.add_handler(CommandHandler("list", cmd_list))
+    app.add_handler(CommandHandler("channel", cmd_channel))
+    app.add_handler(CommandHandler("cookies", cmd_cookies))
+    app.add_handler(CommandHandler("schedule", cmd_schedule))
+    
+    # Downloads & Action
+    app.add_handler(CommandHandler("run", cmd_run))
+    app.add_handler(CommandHandler("stories", cmd_stories))
+    app.add_handler(CommandHandler("highlights", cmd_highlights))
+    app.add_handler(CommandHandler("stop", cmd_stop))
     app.add_handler(CommandHandler("link", cmd_link))
+    app.add_handler(CommandHandler("history", cmd_history))
     app.add_handler(CommandHandler("export", cmd_export))
+    app.add_handler(CommandHandler("cleanup", cmd_cleanup))
+    
+    # Admin
+    app.add_handler(CommandHandler("admin", cmd_admin))
+    
+    # Fallbacks & Callbacks
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    
     app.run_polling(allowed_updates=["message", "callback_query"])
 
 
 if __name__ == "__main__":
     main()
-
