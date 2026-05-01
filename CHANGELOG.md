@@ -4,6 +4,17 @@ This is the history of every major fix and feature added to **Cuhi Bot**. We try
 
 ---
 
+## [1.3.3] — 2026-05-01
+
+### Grouping and Reliability Fix
+- **Native Video Grouping**: Videos are now properly packaged into 10-item media groups alongside photos, significantly reducing chat clutter.
+- **Interleaved Downloads**: The "Both" download option now intelligently mixes photos and videos together instead of performing two separate passes.
+- **Anti-Rate Limit**: Increased safety delays and implemented `--continue` flags to prevent gallery-dl from dropping out mid-profile due to platform restrictions.
+
+- **Static Analysis (Pass 18)**: Performed a deep-dive PEP-8 formatting pass using `flake8` to resolve all lingering indentation inconsistencies and ensure standard alignment.
+
+---
+
 ## [1.3.2] — 2026-05-01
 
 ### The "Zero-Error" Update

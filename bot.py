@@ -65,10 +65,10 @@ COOKIES_ROOT = Path(os.environ.get("COOKIES_ROOT", "./cookies"))
 
 # (profiles_filename, cookie_filename, request_sleep_seconds)
 PLATFORMS: dict[str, tuple[str, str, int]] = {
-    "instagram": ("instagram_profiles.txt", "instagram.com_cookies.txt", 3),
-    "tiktok": ("tiktok_profiles.txt", "tiktok.com_cookies.txt", 2),
-    "facebook": ("facebook_profiles.txt", "facebook.com_cookies.txt", 3),
-    "x": ("x_profiles.txt", "x.com_cookies.txt", 3),
+    "instagram": ("instagram_profiles.txt", "instagram.com_cookies.txt", 5),
+    "tiktok": ("tiktok_profiles.txt", "tiktok.com_cookies.txt", 3),
+    "facebook": ("facebook_profiles.txt", "facebook.com_cookies.txt", 4),
+    "x": ("x_profiles.txt", "x.com_cookies.txt", 4),
 }
 
 # Maps env-var names to platform cookie filenames
@@ -457,8 +457,8 @@ def normalize_chat(value) -> int | str:
         # Only prefix -100 for IDs that look like short channel IDs (e.g. 123456789)
         # Standard user IDs are usually 9-10 digits and positive.
         # Supergroups usually need the -100 prefix if provided as positive integers.
-        if n > 5000000000: # Heuristic: large positive IDs are likely modern user IDs
-             return n
+        if n > 5000000000:  # Heuristic: large positive IDs are likely modern user IDs
+            return n
         return int(f"-100{n}")
     return v
 
@@ -651,6 +651,8 @@ def build_gdl_cmd(
         "-D", str(out_dir),
         "--download-archive", str(archive),
         "--sleep-request", str(sleep),
+        "--no-mtime",
+        "--continue",
     ]
 
     if mode == "photos":
@@ -858,7 +860,7 @@ async def flush(
                                     logger.warning("Skipping %s in group - too large", f.name)
                                     continue
                                 file_handles.append(open(f, "rb"))
-                            group = [InputMediaVideo(fh)
+                            group = [InputMediaVideo(fh, supports_streaming=True)
                                      for fh in file_handles]
                         else:  # mixed
                             group = []
@@ -871,10 +873,10 @@ async def flush(
                                 if file_kind(f) == "photo":
                                     group.append(InputMediaPhoto(fh))
                                 else:
-                                    group.append(InputMediaVideo(fh))
+                                    group.append(InputMediaVideo(fh, supports_streaming=True))
                         
                         if not group:
-                             break # skip if all files in chunk were too large
+                            break  # skip if all files in chunk were too large
 
                         await _send_group(target, group)
                         sent += len(chunk)
@@ -1009,7 +1011,7 @@ async def realtime_download(
         exts, send_as = VIDEO_EXT, "videos"
     elif mode == "documents":
         exts, send_as = PHOTO_EXT | VIDEO_EXT, "documents"
-    else:  # stories / highlights
+    else:  # stories / highlights / both
         exts, send_as = PHOTO_EXT | VIDEO_EXT, "mixed"
 
     cmd, _ = build_gdl_cmd(
@@ -1072,6 +1074,22 @@ async def realtime_download(
                                 await drain()
                                 if status:
                                     await status.set(f"📦 `{handle}` › {sent_count} file(s) sent…")
+                # Also detect files by filename if path is relative
+                elif any(line.endswith(ext) for ext in exts):
+                    # Try to find the file in the out_dir
+                    fname = os.path.basename(line)
+                    f = out_dir / fname
+                    if f.exists() and f.is_file() and f not in seen:
+                        seen.add(f)
+                        buffer.append(f)
+                        try:
+                            downloaded_bytes += f.stat().st_size
+                        except OSError:
+                            pass
+                        if len(buffer) >= MEDIA_GROUP_MAX:
+                            await drain()
+                            if status:
+                                await status.set(f"📦 `{handle}` › {sent_count} file(s) sent…")
         except Exception:
             pass
 
@@ -1158,11 +1176,19 @@ async def realtime_download(
 
         await drain()
 
+        if stderr_buf:
+            err_text = stderr_buf.decode(errors="replace").strip()
+            if err_text:
+                logger.warning("gallery-dl stderr [%s/%s]: %s", platform, handle, err_text)
+
         if status:
-            await status.set(
-                f"📦 `{handle}` → {sent_count} file(s) on `{mode}`.",
-                force=True,
-            )
+            if proc.returncode and proc.returncode != 0 and sent_count == 0:
+                await status.set(f"⚠️ `{handle}` → Failed or blocked by platform. (Exit: {proc.returncode})", force=True)
+            else:
+                await status.set(
+                    f"📦 `{handle}` → {sent_count} file(s) on `{mode}`.",
+                    force=True,
+                )
     finally:
         # Cleanup
         if ignore_archive:
@@ -1246,24 +1272,24 @@ async def do_download(msg, choice: str, uid: int, uname: str,
 
                 await status.set(f"⏳ *{platform.capitalize()}* › `{handle}`")
 
-                modes = ("photos", "videos") if mode == "both" else (mode,)
-                for m in modes:
-                    if stop.is_set():
-                        break
-                    n = await realtime_download(
-                        target=target, uid=uid, platform=platform,
-                        handle=handle, mode=m, url=url, cookie=cookie,
-                        sleep=sleep, stop=stop, status=status,
-                    )
-                    total += n
-                    if n > 0:
-                        append_history(uid, {
-                            "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            "platform": platform,
-                            "user": handle,
-                            "media": m,
-                            "sent": n,
-                        })
+                # "Both" is now handled as a single pass in realtime_download
+                # by using mode="both" which triggers "mixed" logic in realtime_download
+                run_mode = "mixed" if mode == "both" else mode
+                
+                n = await realtime_download(
+                    target=target, uid=uid, platform=platform,
+                    handle=handle, mode=run_mode, url=url, cookie=cookie,
+                    sleep=sleep, stop=stop, status=status,
+                )
+                total += n
+                if n > 0:
+                    append_history(uid, {
+                        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "platform": platform,
+                        "user": handle,
+                        "media": mode,
+                        "sent": n,
+                    })
 
         elapsed = int((datetime.now() - started).total_seconds())
         if total == 0 and not stop.is_set():
@@ -2265,21 +2291,18 @@ async def _scheduled_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 if ev.is_set():
                     break
                 handle = handle_from_url(url)
-                for m in ("photos", "videos"):
-                    if ev.is_set():
-                        break
-                    n = await realtime_download(
-                        target=target, uid=uid, platform=platform,
-                        handle=handle, mode=m, url=url, cookie=cookie,
-                        sleep=sleep, stop=ev, status=status,
-                    )
-                    total += n
-                    if n > 0:
-                        append_history(uid, {
-                            "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                            "platform": platform, "user": handle,
-                            "media": m, "sent": n,
-                        })
+                n = await realtime_download(
+                    target=target, uid=uid, platform=platform,
+                    handle=handle, mode="mixed", url=url, cookie=cookie,
+                    sleep=sleep, stop=ev, status=status,
+                )
+                total += n
+                if n > 0:
+                    append_history(uid, {
+                        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "platform": platform, "user": handle,
+                        "media": "auto", "sent": n,
+                    })
 
         await status.set(f"⏰ *Scheduled download done!* {total} file(s).", force=True)
     except Exception:

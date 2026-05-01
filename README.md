@@ -37,7 +37,7 @@ Cuhi Bot is maintained by **Copyright News**. We focus on building open-source t
 ## ⚡ What it Does
 
 - 📸 **Multi-platform**: Grab stuff from **Instagram**, **TikTok**, **Facebook**, and **X/Twitter**.
-- 🎬 **Everything Included**: Photos, videos, stories, highlights — you name it.
+- 🎬 **Everything Included**: Photos, videos, stories, highlights — all cleanly packaged into 10-item media groups.
 - 📡 **Auto-Forwarding**: Automatically send media to your private channels or groups.
 - 🍪 **Cookie Support**: Upload your own cookies via the bot for private/age-restricted content.
 - 🗂️ **Smart Archive**: It remembers what you've already downloaded so it doesn't waste bandwidth.

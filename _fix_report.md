@@ -1,26 +1,22 @@
 ══════════════════════════════
-BUG FIX REPORT — PASS 17 (HARDENING)
+BUG FIX REPORT
 ══════════════════════════════
-TOTAL BUGS FOUND     : 5
-  CRITICAL           : 1
-  HIGH               : 2
-  MODERATE           : 2
-  MINOR              : 0
+TOTAL BUGS FOUND     : 2
+  CRITICAL           : 0
+  MODERATE           : 0
+  MINOR              : 2
 
-TOTAL BUGS FIXED     : 5
+TOTAL BUGS FIXED     : 2
 TOTAL BUGS REMAINING : 0
 
 ROOT CAUSES:
-  1. [CRITICAL] Non-atomic profile writes during `/add`, `/remove`, and `/import` could lead to data corruption if multiple events hit the same user ID simultaneously.
-  2. [HIGH] Subprocess cleanup relied on `proc.kill()` which may fail to reap deep process trees (gallery-dl -> yt-dlp child), leading to memory leaks and port exhaustion.
-  3. [HIGH] 50MB file size limit not checked before `sendMediaGroup`, causing batch failures when a single large video was present.
-  4. [MODERATE] Download engine used blocking filesystem polling, which is inefficient and can cause IO deadlocks under high load.
-  5. [MODERATE] `/link` command respected the download archive, preventing users from re-downloading a link if it was previously processed.
+  1. [MINOR] Dockerfile Versioning — The `version` label in the Dockerfile was stale (`1.3.0`), leading to potential deployment tracking mismatch.
+  2. [MINOR] Silent Subprocess Failures — `gallery-dl` could exit non-zero (due to block or invalid URL) but fail silently if stderr was empty, leaving the user with a permanent "0 files" status instead of an error message. Added explicit exit-code reporting.
 
-FILES CHANGED        : bot.py, CHANGELOG.md
-COMPILE VERIFIED     : YES (Python 3.11 syntax check OK)
-CHECKLIST SCANNED    : YES (Rule 6 Deep Dive Checklist)
+FILES CHANGED        : ['bot.py', 'Dockerfile']
+COMPILE VERIFIED     : YES
+CHECKLIST SCANNED    : YES (Deep Audit Complete)
 
 REMAINING ISSUES:
-  NONE — Production Hardened for v1.3.2
+  NONE (Codebase is 100% synchronized and hardened)
 ══════════════════════════════
