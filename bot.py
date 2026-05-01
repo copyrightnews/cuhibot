@@ -1294,7 +1294,7 @@ async def do_download(msg, choice: str, uid: int, uname: str,
         if total == 0 and not stop.is_set():
             final = "ℹ️ *No new media found.* (all already downloaded or no sources set)"
         elif stop.is_set():
-            final = f"⏹️ *Stopped.* {total} file(s) in {elapsed}s."
+            final = f"🚫 *Stopped.* {total} file(s) in {elapsed}s."
         else:
             final = f"✅ *Done!* {total} file(s) in {elapsed}s."
         await status.set(final, force=True)
@@ -1337,7 +1337,7 @@ async def do_special_download(msg, url: str, platform: str, mode: str,
         if n == 0 and not stop.is_set():
             await status.set("ℹ️ *No new media found.* (already downloaded or private)", force=True)
         elif stop.is_set():
-            await status.set(f"⏹️ *Stopped.* {n} file(s) sent.", force=True)
+            await status.set(f"🚫 *Stopped.* {n} file(s) sent.", force=True)
         else:
             await status.set(f"✅ *Done!* {n} file(s) sent.", force=True)
     finally:
@@ -1853,7 +1853,7 @@ async def handle_callback(
         ev = STOP_EVENTS.get(uid)
         if ev:
             ev.set()
-            await q.message.reply_text("⏹️ Stop signal sent.")
+            await q.message.reply_text("🚫 Stop signal sent.")
         else:
             await q.message.reply_text("ℹ️ No active download.")
         return
@@ -2141,7 +2141,7 @@ async def cmd_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             if n == 0 and not stop.is_set():
                 await status.set("ℹ️ *No media found.* (may be private or already downloaded)", force=True)
             elif stop.is_set():
-                await status.set(f"⏹️ *Stopped.* {n} file(s) sent.", force=True)
+                await status.set(f"🚫 *Stopped.* {n} file(s) sent.", force=True)
             else:
                 await status.set(f"✅ *Done!* {n} file(s) sent.", force=True)
         finally:
