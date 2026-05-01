@@ -19,13 +19,13 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.2.4-brightgreen?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/version-1.3.1-brightgreen?style=flat-square" alt="Version" />
   <img src="https://img.shields.io/badge/python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
   <img src="https://img.shields.io/badge/telegram--bot-22.1-26A5E4?style=flat-square&logo=telegram&logoColor=white" alt="python-telegram-bot" />
   <img src="https://img.shields.io/badge/gallery--dl-1.32-orange?style=flat-square" alt="gallery-dl" />
   <img src="https://img.shields.io/badge/yt--dlp-latest-red?style=flat-square" alt="yt-dlp" />
   <img src="https://img.shields.io/badge/deploy-Railway-0B0D0E?style=flat-square&logo=railway&logoColor=white" alt="Railway" />
-  <img src="https://img.shields.io/badge/bugs_fixed-45-critical?style=flat-square" alt="Bugs Fixed" />
+  <img src="https://img.shields.io/badge/bugs_fixed-73-critical?style=flat-square" alt="Bugs Fixed" />
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License" />
 </p>
 
@@ -51,7 +51,7 @@
 | 🚫 **Stop control** | Gracefully stop any running download mid-stream |
 | 🗑️ **Disk management** | One-tap cleanup of cached downloads to free disk space |
 | 🔒 **Access control** | User allowlist, admin system, rate limiting, and input validation |
-| 🛡️ **Production-hardened** | 45 bugs fixed across 8 audit passes — zero-error codebase |
+| 🛡️ **Production-hardened** | 73 bugs fixed across 16 audit passes — zero-error codebase |
 
 ## Architecture
 

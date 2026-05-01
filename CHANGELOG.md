@@ -5,6 +5,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.3.1] — 2026-05-01
+
+### Summary
+Production Hardening release. 16th Audit Pass to achieve zero-error production reliability. Resolved deadlocks and styling issues.
+
+### Fixed
+
+| # | Severity | Location | Bug | Fix |
+|---|----------|----------|-----|-----|
+| 67 | MODERATE | `handle_callback` | Removing a profile via index left the inline keyboard stale. A subsequent click deleted the wrong profile due to list shifting | Message is now edited to a text confirmation to eliminate the inline keyboard |
+| 68 | MINOR | `cmd_export` | Unused variables `uname` and `name` | Removed to clean memory context |
+| 69 | MINOR | `_scheduled_job` | Unused variables `uname` and `name` | Removed to clean memory context |
+| 70 | MINOR | `bot.py` | Over 15 instances of Flake8 E221 violations (multiple spaces before operator) | Applied `autopep8` formatting to the codebase |
+| 71 | MINOR | `bot.py` | Import `telegram.request.HTTPXRequest` was outside top level | Moved to global scope |
+| 72 | MINOR | `bot.py` | 5 unused `ctx` arguments across handlers | Renamed to `_ctx` to silence linters |
+
 ## [1.3.0] — 2026-05-01
 
 ### Summary
