@@ -652,7 +652,6 @@ def build_gdl_cmd(
         "--download-archive", str(archive),
         "--sleep-request", str(sleep),
         "--no-mtime",
-        "--continue",
     ]
 
     if mode == "photos":
