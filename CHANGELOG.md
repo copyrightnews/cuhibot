@@ -5,6 +5,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.3.2] — 2026-05-01
+
+### Summary
+Critical Reliability Hardening (Audit Pass 17). Implemented atomic state management, real-time download engine improvements, and robust subprocess lifecycle management.
+
+### Added
+- **Atomic Profile Management**: Implemented `atomic_edit_profiles` utilizing a Read-Modify-Write (RMW) pattern with file locking to ensure zero data corruption under concurrent access.
+- **50MB File Guard**: Added pre-flight checks to skip files exceeding Telegram's 50MB Bot API limit, preventing redundant failures in media groups.
+- **Ignore Archive Flag**: Added support for bypassing the download archive in `/link` requests to allow on-demand re-downloads.
+
+### Fixed
+- **Download Engine Hardening**: Refactored `realtime_download` to parse `stdout` for real-time completion tracking instead of unreliable filesystem polling.
+- **Subprocess Cleanup**: Implemented robust tree-kill logic for both Windows (`taskkill`) and Linux (`signal.SIGKILL`) to prevent orphan processes.
+- **Incremental Stats**: Added real-time updates for `total_sent_files` and `total_downloaded_bytes` during the download process.
+
+
+
 ## [1.3.1] — 2026-05-01
 
 ### Summary
