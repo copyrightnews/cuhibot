@@ -1930,8 +1930,7 @@ async def cmd_admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(uid):
         await update.message.reply_text("🔒 Admin access required.")
         return
-    mode = "🔓 Open (all users)" if not ALLOWED_USERS else f"🔒 Restricted ({
-        len(ALLOWED_USERS)} users)"
+    mode = "🔓 Open (all users)" if not ALLOWED_USERS else f"🔒 Restricted ({len(ALLOWED_USERS)} users)"
     text = (
         "🛡️ *Admin Panel*\n\n"
         f"• Access mode : {mode}\n"
