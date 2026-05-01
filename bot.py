@@ -265,11 +265,32 @@ def read_profiles(uid: int, platform: str) -> list[str]:
 
 
 def write_profiles(uid: int, platform: str, urls: Iterable[str]) -> None:
+    """Overwrites profiles for a platform. (Deprecated: use atomic_edit_profiles for RMW)."""
     path = profiles_path(uid, platform)
     url_list = list(urls)
     with locked_file(path):
         if url_list:
             path.write_text("\n".join(url_list) + "\n", encoding="utf-8")
+        else:
+            path.write_text("", encoding="utf-8")
+
+
+def atomic_edit_profiles(uid: int, platform: str, func: callable) -> None:
+    """Atomic Read-Modify-Write for profiles under lock."""
+    path = profiles_path(uid, platform)
+    with locked_file(path):
+        # 1. Read
+        current = []
+        if path.exists():
+            current = [line.strip() for line in path.read_text(
+                encoding="utf-8").splitlines() if line.strip()]
+
+        # 2. Modify
+        new_list = func(current)
+
+        # 3. Write
+        if new_list:
+            path.write_text("\n".join(new_list) + "\n", encoding="utf-8")
         else:
             path.write_text("", encoding="utf-8")
 
@@ -433,14 +454,40 @@ def normalize_chat(value) -> int | str:
         n = int(v)
         if n < 0:
             return n
+        # Only prefix -100 for IDs that look like short channel IDs (e.g. 123456789)
+        # Standard user IDs are usually 9-10 digits and positive.
+        # Supergroups usually need the -100 prefix if provided as positive integers.
+        if n > 5000000000: # Heuristic: large positive IDs are likely modern user IDs
+             return n
         return int(f"-100{n}")
     return v
 
 
 def handle_from_url(url: str) -> str:
     """Extract username/handle from a profile URL, stripping query strings first."""
-    clean = url.split("?")[0].split("#")[0]
-    return clean.rstrip("/").split("/")[-1].lstrip("@")
+    # Strip query and fragments
+    clean = url.split("?")[0].split("#")[0].rstrip("/")
+    path_parts = clean.split("/")
+
+    if not path_parts:
+        return "unknown"
+
+    # Common patterns:
+    # instagram.com/username
+    # x.com/username
+    # tiktok.com/@username
+    # facebook.com/username
+    # facebook.com/profile.php?id=... (handled by split("?")[0] as 'profile.php')
+
+    last = path_parts[-1].lstrip("@")
+
+    # Special case for X/Twitter status URLs if someone provides them
+    if "status" in path_parts and len(path_parts) >= 2:
+        idx = path_parts.index("status")
+        if idx > 0:
+            return path_parts[idx-1].lstrip("@")
+
+    return last if last else "unknown"
 
 
 def stories_url_for(platform: str, url: str) -> str:
@@ -799,23 +846,36 @@ async def flush(
                     try:
                         if send_as == "photos":
                             for f in chunk:
+                                if f.stat().st_size > TELEGRAM_FILE_LIMIT:
+                                    logger.warning("Skipping %s in group - too large", f.name)
+                                    continue
                                 file_handles.append(open(f, "rb"))
                             group = [InputMediaPhoto(fh)
                                      for fh in file_handles]
                         elif send_as == "videos":
                             for f in chunk:
+                                if f.stat().st_size > TELEGRAM_FILE_LIMIT:
+                                    logger.warning("Skipping %s in group - too large", f.name)
+                                    continue
                                 file_handles.append(open(f, "rb"))
                             group = [InputMediaVideo(fh)
                                      for fh in file_handles]
                         else:  # mixed
                             group = []
                             for f in chunk:
+                                if f.stat().st_size > TELEGRAM_FILE_LIMIT:
+                                    logger.warning("Skipping %s in group - too large", f.name)
+                                    continue
                                 fh = open(f, "rb")
                                 file_handles.append(fh)
                                 if file_kind(f) == "photo":
                                     group.append(InputMediaPhoto(fh))
                                 else:
                                     group.append(InputMediaVideo(fh))
+                        
+                        if not group:
+                             break # skip if all files in chunk were too large
+
                         await _send_group(target, group)
                         sent += len(chunk)
                         sent_files.extend(chunk)
@@ -914,13 +974,20 @@ async def realtime_download(
     sleep: int,
     stop: asyncio.Event,
     status: Status | None = None,
+    ignore_archive: bool = False,
 ) -> int:
-    """Streams gallery-dl output: detects fully-written media, sends in batches,
-    deletes them, and stops the moment `stop` is set.
+    """Streams gallery-dl output: detects fully-written media via stdout parsing,
+    sends in batches, deletes them, and stops the moment `stop` is set.
     """
     out_dir = (udir(uid) / "downloads" / platform.capitalize()
                / handle / mode.capitalize())
-    archive = archive_path(uid, platform, handle, mode)
+
+    # /link command uses a separate archive to allow re-downloads
+    if ignore_archive:
+        archive = udir(uid) / "archives" / "_temp_link_archive.txt"
+        archive.unlink(missing_ok=True)
+    else:
+        archive = archive_path(uid, platform, handle, mode)
 
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -956,16 +1023,59 @@ async def realtime_download(
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
-        stdout=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         **kwargs
     )
 
-    # Drain stderr continuously to prevent deadlock if gallery-dl writes >64
-    # KB of errors
     stderr_buf = bytearray()
+    seen: set[Path] = set()
+    buffer: list[Path] = []
+    sent_count = 0
+    downloaded_bytes = 0
 
-    async def _drain_stderr():
+    async def drain() -> None:
+        nonlocal sent_count, downloaded_bytes
+        if buffer and not stop.is_set():
+            batch = list(buffer)
+            n = await flush(target, batch, send_as, stop)
+            if n > 0:
+                sent_count += n
+                add_sent_files(uid, n) # Incremental update
+                if downloaded_bytes > 0:
+                    add_downloaded_bytes(uid, downloaded_bytes) # Incremental update
+                    downloaded_bytes = 0
+            buffer.clear()
+
+    async def _read_stdout():
+        nonlocal downloaded_bytes
+        if not proc.stdout:
+            return
+        try:
+            while True:
+                line_bytes = await proc.stdout.readline()
+                if not line_bytes:
+                    break
+                line = line_bytes.decode("utf-8", errors="replace").strip()
+                # gallery-dl prints the full path of the downloaded file
+                if line.startswith(str(out_dir)):
+                    f = Path(line)
+                    if f.exists() and f.is_file() and f not in seen:
+                        if f.suffix.lower() in exts:
+                            seen.add(f)
+                            buffer.append(f)
+                            try:
+                                downloaded_bytes += f.stat().st_size
+                            except OSError:
+                                pass
+                            if len(buffer) >= MEDIA_GROUP_MAX:
+                                await drain()
+                                if status:
+                                    await status.set(f"📦 `{handle}` › {sent_count} file(s) sent…")
+        except Exception:
+            pass
+
+    async def _read_stderr():
         if not proc.stderr:
             return
         try:
@@ -979,91 +1089,63 @@ async def realtime_download(
         except Exception:
             pass
 
-    stderr_task = asyncio.create_task(_drain_stderr())
-
-    seen: set[Path] = set()
-    buffer: list[Path] = []
-    sent_count = 0
-    downloaded_bytes = 0
-
-    async def drain() -> None:
-        nonlocal sent_count
-        if buffer and not stop.is_set():
-            batch = list(buffer)
-            n = await flush(target, batch, send_as, stop)
-            sent_count += n
-            buffer.clear()
+    stdout_task = asyncio.create_task(_read_stdout())
+    stderr_task = asyncio.create_task(_read_stderr())
 
     try:
-        while True:
+        # Main wait loop
+        while proc.returncode is None:
             if stop.is_set():
                 try:
                     if os.name != "nt":
                         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                     else:
-                        proc.kill()
+                        # Windows tree kill
+                        import subprocess
+                        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                                       capture_output=True, check=False)
                 except Exception:
                     try:
                         proc.kill()
                     except Exception:
                         pass
                 break
-
-            if proc.returncode is not None:
-                break
-
+            
+            # Periodic sweep of directory as fallback (in case stdout parsing missed something)
             if out_dir.exists():
-                new_files = []
                 for f in sorted(out_dir.iterdir()):
-                    if f in seen or not f.is_file():
-                        continue
-                    if f.suffix.lower() not in exts:
+                    if f in seen or not f.is_file() or f.suffix.lower() not in exts:
                         continue
                     if f.name.endswith(('.part', '.ytdl', '.tmp')):
                         continue
-                    new_files.append(f)
+                    # Stability check
+                    try:
+                        s1 = f.stat().st_size
+                        await asyncio.sleep(0.1)
+                        if f.stat().st_size == s1:
+                            seen.add(f)
+                            buffer.append(f)
+                            downloaded_bytes += s1
+                            if len(buffer) >= MEDIA_GROUP_MAX:
+                                await drain()
+                    except (OSError, FileNotFoundError):
+                        continue
 
-                if new_files:
-                    sizes1 = {}
-                    for f in new_files:
-                        try:
-                            sizes1[f] = f.stat().st_size
-                        except OSError:
-                            pass
+            await asyncio.sleep(1.0)
+            # Re-check returncode (this property is updated when wait() is called or by transport)
+            # We also call wait with timeout to ensure reaping
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=0.1)
+            except asyncio.TimeoutError:
+                pass
 
-                    await asyncio.sleep(0.5)
-
-                    for f in new_files:
-                        try:
-                            s2 = f.stat().st_size
-                            s1 = sizes1.get(f)
-                            if s1 is None or s1 != s2:
-                                continue
-                        except OSError:
-                            continue
-
-                        seen.add(f)
-                        buffer.append(f)
-                        try:
-                            downloaded_bytes += f.stat().st_size
-                        except OSError:
-                            pass
-                        if len(buffer) >= MEDIA_GROUP_MAX:
-                            await drain()
-                            if status:
-                                await status.set(f"📦 `{handle}` › {sent_count} file(s) sent…")
-                else:
-                    await asyncio.sleep(0.5)
-            else:
-                await asyncio.sleep(0.5)
-
-        # Final sweep after subprocess exited cleanly
+        # Subprocess finished, ensure tasks finish reading pipes
+        await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+        
+        # Final sweep for any remaining files
         if not stop.is_set() and out_dir.exists():
-            await asyncio.sleep(0.3)
             for f in sorted(out_dir.iterdir()):
-                if f in seen or not f.is_file():
-                    continue
-                if f.suffix.lower() not in exts:
+                if f in seen or not f.is_file() or f.suffix.lower() not in exts:
                     continue
                 if f.name.endswith(('.part', '.ytdl', '.tmp')):
                     continue
@@ -1073,8 +1155,6 @@ async def realtime_download(
                     downloaded_bytes += f.stat().st_size
                 except OSError:
                     pass
-                if len(buffer) >= MEDIA_GROUP_MAX:
-                    await drain()
 
         await drain()
 
@@ -1084,6 +1164,10 @@ async def realtime_download(
                 force=True,
             )
     finally:
+        # Cleanup
+        if ignore_archive:
+            archive.unlink(missing_ok=True)
+            
         if out_dir.exists():
             all_media_ext = PHOTO_EXT | VIDEO_EXT
             for f in list(out_dir.iterdir()):
@@ -1096,31 +1180,21 @@ async def realtime_download(
                 out_dir.rmdir()
             except OSError:
                 pass
+        
         if proc.returncode is None:
             try:
                 proc.kill()
+                await proc.wait()
             except Exception:
                 pass
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=5)
-            except Exception:
-                pass
+        
+        stdout_task.cancel()
         stderr_task.cancel()
-        try:
-            if stderr_buf:
-                logger.warning(
-                    "gallery-dl stderr [%s/%s]: %s",
-                    platform, handle,
-                    stderr_buf.decode(errors="replace").strip(),
-                )
-        except Exception:
-            pass
-
-    if downloaded_bytes > 0:
-        add_downloaded_bytes(uid, downloaded_bytes)
-
-    if sent_count > 0:
-        add_sent_files(uid, sent_count)
+        
+        if stderr_buf:
+            err_text = stderr_buf.decode(errors="replace").strip()
+            if err_text:
+                logger.warning("gallery-dl stderr [%s/%s]: %s", platform, handle, err_text)
 
     return sent_count
 
@@ -1464,6 +1538,15 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text(f"❌ {err}")
             await send_menu(update.message, uid, uname, name)
             return
+
+        def _add(current: list[str]) -> list[str]:
+            if text in current:
+                return current
+            if len(current) >= MAX_PROFILES_PER_PLATFORM:
+                return current
+            return current + [text]
+
+        # Read state for messaging, but the actual addition is atomic
         existing = read_profiles(uid, platform)
         if text in existing:
             await update.message.reply_text("ℹ️ That URL is already in your list.")
@@ -1472,7 +1555,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 f"⚠️ Maximum {MAX_PROFILES_PER_PLATFORM} sources per platform reached."
             )
         else:
-            write_profiles(uid, platform, existing + [text])
+            atomic_edit_profiles(uid, platform, _add)
             await update.message.reply_text(
                 f"✅ Added to *{platform.capitalize()}*: `{text}`",
                 parse_mode="Markdown",
@@ -1629,10 +1712,18 @@ async def handle_callback(
         except (ValueError, IndexError):
             await send_menu(q.message, uid, uname, name)
             return
-        urls = read_profiles(uid, platform)
-        if 0 <= idx < len(urls):
-            removed = urls.pop(idx)
-            write_profiles(uid, platform, urls)
+
+        removed_container = []
+
+        def _remove(current: list[str]) -> list[str]:
+            if 0 <= idx < len(current):
+                removed_container.append(current.pop(idx))
+            return current
+
+        atomic_edit_profiles(uid, platform, _remove)
+
+        if removed_container:
+            removed = removed_container[0]
             try:
                 await q.message.edit_text(f"✅ Removed: `{removed}`", parse_mode="Markdown")
             except Exception:
@@ -2011,11 +2102,11 @@ async def cmd_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     async def _do_link(stop: asyncio.Event) -> None:
         try:
-            n = await realtime_download(
-                target=target, uid=uid, platform=platform, handle=handle,
-                mode="documents", url=url, cookie=cookie, sleep=sleep,
-                stop=stop, status=status,
-            )
+                n = await realtime_download(
+                    target=target, uid=uid, platform=platform, handle=handle,
+                    mode="documents", url=url, cookie=cookie, sleep=sleep,
+                    stop=stop, status=status, ignore_archive=True,
+                )
             if n > 0:
                 append_history(uid, {
                     "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -2105,19 +2196,22 @@ def _import_sources(uid: int, text: str) -> tuple[int, int]:
             skipped += 1
 
     for plat, new_urls in pending.items():
-        existing = read_profiles(uid, plat)
-        existing_set = set(existing)
-        for url in new_urls:
-            if url in existing_set:
-                skipped += 1
-                continue
-            if len(existing) >= MAX_PROFILES_PER_PLATFORM:
-                skipped += 1
-                continue
-            existing.append(url)
-            existing_set.add(url)
-            added += 1
-        write_profiles(uid, plat, existing)
+        def _merge(current: list[str]) -> list[str]:
+            nonlocal added, skipped
+            existing_set = set(current)
+            for url in new_urls:
+                if url in existing_set:
+                    skipped += 1
+                    continue
+                if len(current) >= MAX_PROFILES_PER_PLATFORM:
+                    skipped += 1
+                    continue
+                current.append(url)
+                existing_set.add(url)
+                added += 1
+            return current
+
+        atomic_edit_profiles(uid, plat, _merge)
 
     return added, skipped
 
