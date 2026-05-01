@@ -10,8 +10,8 @@ Cuhi Bot is a self-hosted Telegram bot for archiving media from Instagram, TikTo
 
 Most downloaders are "black boxes"—you don't know who has your cookies or where your data is stored. We built this to be transparent:
 *   **Self-Hosted**: You own the code. Your cookies and sessions live on your own server.
-*   **Production Ready**: We use OS-level file locking to ensure your archive remains consistent even under load.
-*   **Streamlined**: The bot streams media to your Telegram chat while it downloads, reducing wait times.
+*   **Async Native**: v1.3.4 introduces a full non-blocking I/O architecture, ensuring the bot stays responsive even during heavy multi-user use.
+*   **Production Ready**: We use OS-level file locking and a dedicated I/O thread pool to ensure consistent performance.
 *   **Stable**: This is a "set and forget" tool designed to run 24/7.
 
 ---

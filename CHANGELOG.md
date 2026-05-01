@@ -4,6 +4,16 @@ This is the history of every major fix and feature added to **Cuhi Bot**. We try
 
 ---
 
+## [1.3.4] — 2026-05-01
+
+### Async Architecture & Stability Patch
+- **Full Async I/O**: Migrated all blocking disk operations (JSON reading/writing, directory scans) to a dedicated thread pool (`ThreadPoolExecutor`). This makes the bot 100% responsive even during massive multi-user downloads.
+- **Resource Leak Fix**: Implemented `contextlib.ExitStack` in the media group sender to guarantee that every file descriptor is closed properly, preventing "Too many open files" crashes.
+- **Throttled Status**: Refined the status update engine to prevent Telegram rate limits and ensure smooth UI transitions.
+- **Atomic Locking**: Optimized file locking with monotonic timers for safer concurrent state management.
+
+---
+
 ## [1.3.3] — 2026-05-01
 
 ### Grouping and Reliability Fix
