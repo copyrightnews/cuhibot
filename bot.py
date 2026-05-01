@@ -778,13 +778,14 @@ async def flush(
                 if await _send_one(target, f, "document", stop):
                     sent += 1
                     sent_files.append(f)
+            return sent
 
         elif len(batch) == 1:
             if stop and stop.is_set():
                 return sent
             f = batch[0]
-            kind = {"photos": "photo", "videos": "video"}.get(
-                send_as) or file_kind(f)
+            kind = {"photos": "photo", "videos": "video",
+                    "documents": "document"}.get(send_as) or file_kind(f)
             if await _send_one(target, f, kind, stop):
                 sent += 1
                 sent_files.append(f)
@@ -881,8 +882,8 @@ async def flush(
                         for f in chunk:
                             if stop and stop.is_set():
                                 return sent
-                            kind = {"photos": "photo", "videos": "video"}.get(
-                                send_as) or file_kind(f)
+                            kind = {"photos": "photo", "videos": "video",
+                                    "documents": "document"}.get(send_as) or file_kind(f)
                             if await _send_one(target, f, kind, stop):
                                 sent += 1
                                 sent_files.append(f)
