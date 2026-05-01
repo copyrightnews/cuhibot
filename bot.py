@@ -40,6 +40,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -59,37 +60,37 @@ logger = logging.getLogger(__name__)
 
 TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
 
-DATA_ROOT = Path(os.environ.get("DATA_ROOT",    "./data"))
+DATA_ROOT = Path(os.environ.get("DATA_ROOT", "./data"))
 COOKIES_ROOT = Path(os.environ.get("COOKIES_ROOT", "./cookies"))
 
 # (profiles_filename, cookie_filename, request_sleep_seconds)
 PLATFORMS: dict[str, tuple[str, str, int]] = {
     "instagram": ("instagram_profiles.txt", "instagram.com_cookies.txt", 3),
-    "tiktok":    ("tiktok_profiles.txt",    "tiktok.com_cookies.txt",    2),
-    "facebook":  ("facebook_profiles.txt",  "facebook.com_cookies.txt",  3),
-    "x":         ("x_profiles.txt",         "x.com_cookies.txt",         3),
+    "tiktok": ("tiktok_profiles.txt", "tiktok.com_cookies.txt", 2),
+    "facebook": ("facebook_profiles.txt", "facebook.com_cookies.txt", 3),
+    "x": ("x_profiles.txt", "x.com_cookies.txt", 3),
 }
 
 # Maps env-var names to platform cookie filenames
 COOKIE_ENV_MAP: dict[str, str] = {
     "COOKIE_INSTAGRAM": "instagram.com_cookies.txt",
-    "COOKIE_TIKTOK":    "tiktok.com_cookies.txt",
-    "COOKIE_FACEBOOK":  "facebook.com_cookies.txt",
-    "COOKIE_X":         "x.com_cookies.txt",
+    "COOKIE_TIKTOK": "tiktok.com_cookies.txt",
+    "COOKIE_FACEBOOK": "facebook.com_cookies.txt",
+    "COOKIE_X": "x.com_cookies.txt",
 }
 
 PLATFORM_DOMAINS: dict[str, tuple[str, ...]] = {
     "instagram": ("instagram.com",),
-    "tiktok":    ("tiktok.com",),
-    "facebook":  ("facebook.com", "fb.com", "m.facebook.com"),
-    "x":         ("x.com", "twitter.com"),
+    "tiktok": ("tiktok.com",),
+    "facebook": ("facebook.com", "fb.com", "m.facebook.com"),
+    "x": ("x.com", "twitter.com"),
 }
 
 PLATFORM_URL_HINTS: dict[str, str] = {
     "instagram": "https://www.instagram.com/",
-    "tiktok":    "https://www.tiktok.com/@",
-    "facebook":  "https://www.facebook.com/",
-    "x":         "https://x.com/",
+    "tiktok": "https://www.tiktok.com/@",
+    "facebook": "https://www.facebook.com/",
+    "x": "https://x.com/",
 }
 
 PHOTO_EXT = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"})
@@ -160,8 +161,7 @@ def locked_file(target: Path):
                 pass
             if attempt == max_retries - 1:
                 raise TimeoutError(
-                    f"Could not acquire lock on {target} after {max_retries} retries"
-                )
+                    f"Could not acquire lock on {target} after {max_retries} retries")
             time.sleep(0.001)
 
     if fd is None:
@@ -260,7 +260,8 @@ def read_profiles(uid: int, platform: str) -> list[str]:
     p = profiles_path(uid, platform)
     if not p.exists():
         return []
-    return [line.strip() for line in p.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [line.strip() for line in p.read_text(
+        encoding="utf-8").splitlines() if line.strip()]
 
 
 def write_profiles(uid: int, platform: str, urls: Iterable[str]) -> None:
@@ -461,41 +462,42 @@ def highlights_url_for(platform: str, url: str) -> str:
 
 def kb_main() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Add source",    callback_data="m_add"),
+        [InlineKeyboardButton("➕ Add source", callback_data="m_add"),
          InlineKeyboardButton("🚫 Remove source", callback_data="m_remove")],
-        [InlineKeyboardButton("🌐 My sources",    callback_data="m_list"),
-         InlineKeyboardButton("✅ Run download",  callback_data="m_run")],
-        [InlineKeyboardButton("📖 Stories",       callback_data="m_stories"),
-         InlineKeyboardButton("✨ Highlights",     callback_data="m_highlights")],
+        [InlineKeyboardButton("🌐 My sources", callback_data="m_list"),
+         InlineKeyboardButton("✅ Run download", callback_data="m_run")],
+        [InlineKeyboardButton("📖 Stories", callback_data="m_stories"),
+         InlineKeyboardButton("✨ Highlights", callback_data="m_highlights")],
         [InlineKeyboardButton("🚫 Stop download", callback_data="m_stop"),
-         InlineKeyboardButton("📜 History",       callback_data="m_history")],
-        [InlineKeyboardButton("🍪 Set cookies",   callback_data="m_cookies"),
-         InlineKeyboardButton("📊 Status",        callback_data="m_status")],
-        [InlineKeyboardButton("📡 Set channel",   callback_data="m_channel"),
-         InlineKeyboardButton("⏰ Schedule",       callback_data="m_schedule")],
+         InlineKeyboardButton("📜 History", callback_data="m_history")],
+        [InlineKeyboardButton("🍪 Set cookies", callback_data="m_cookies"),
+         InlineKeyboardButton("📊 Status", callback_data="m_status")],
+        [InlineKeyboardButton("📡 Set channel", callback_data="m_channel"),
+         InlineKeyboardButton("⏰ Schedule", callback_data="m_schedule")],
         [InlineKeyboardButton("📎 Export sources", callback_data="m_export"),
-         InlineKeyboardButton("🗑️ Free disk",     callback_data="m_cleanup")],
+         InlineKeyboardButton("🗑️ Free disk", callback_data="m_cleanup")],
     ])
 
 
 def kb_back() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="m_back")]])
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🔙 Back", callback_data="m_back")]])
 
 
 def kb_platforms(prefix: str) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(p.capitalize(), callback_data=f"{prefix}_{p}")]
-            for p in PLATFORMS]
+    rows = [[InlineKeyboardButton(
+        p.capitalize(), callback_data=f"{prefix}_{p}")] for p in PLATFORMS]
     rows.append([InlineKeyboardButton("🔙 Back", callback_data="m_back")])
     return InlineKeyboardMarkup(rows)
 
 
 def kb_media() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🖼️ Photos only",       callback_data="dl_1")],
-        [InlineKeyboardButton("🎬 Videos only",       callback_data="dl_2")],
+        [InlineKeyboardButton("🖼️ Photos only", callback_data="dl_1")],
+        [InlineKeyboardButton("🎬 Videos only", callback_data="dl_2")],
         [InlineKeyboardButton("🔖 Both (separately)", callback_data="dl_3")],
-        [InlineKeyboardButton("📁 Files (as docs)",   callback_data="dl_4")],
-        [InlineKeyboardButton("🔙 Back",              callback_data="m_back")],
+        [InlineKeyboardButton("📁 Files (as docs)", callback_data="dl_4")],
+        [InlineKeyboardButton("🔙 Back", callback_data="m_back")],
     ])
 
 
@@ -532,7 +534,13 @@ def render_menu(uid: int, username: str, name: str) -> str:
     )
 
 
-async def send_menu(msg, uid: int, username: str, name: str, *, edit=False) -> None:
+async def send_menu(
+        msg,
+        uid: int,
+        username: str,
+        name: str,
+        *,
+        edit=False) -> None:
     text = render_menu(uid, username, name)
     try:
         if edit:
@@ -635,6 +643,18 @@ def file_kind(f: Path) -> str:
     return "photo" if f.suffix.lower() in PHOTO_EXT else "video"
 
 
+async def _smart_sleep(wait: float, stop: asyncio.Event | None = None) -> bool:
+    """Sleeps for `wait` seconds. Returns True if `stop` was set during sleep."""
+    if stop is None:
+        await asyncio.sleep(wait)
+        return False
+    try:
+        await asyncio.wait_for(stop.wait(), timeout=wait)
+        return True
+    except asyncio.TimeoutError:
+        return False
+
+
 async def _send_group(target, group: list) -> None:
     """Send a media group. No retry — file handles are at EOF after first attempt.
     flush() catches exceptions and falls back to _send_one() which reopens files.
@@ -646,10 +666,18 @@ async def _send_group(target, group: list) -> None:
         await bot.send_media_group(chat_id=cid, media=group)
 
 
-async def _send_one(target, f: Path, kind: str, *, _retries: int = 0) -> bool:
+async def _send_one(
+        target,
+        f: Path,
+        kind: str,
+        stop: asyncio.Event | None = None,
+        *,
+        _retries: int = 0) -> bool:
     """Send a single file. Returns True on success, False on permanent failure.
     Retries up to 3x RetryAfter and 4x TimedOut with exponential backoff.
     """
+    if stop and stop.is_set():
+        return False
     try:
         fsize = f.stat().st_size
     except OSError:
@@ -682,23 +710,30 @@ async def _send_one(target, f: Path, kind: str, *, _retries: int = 0) -> bool:
     except RetryAfter as exc:
         if _retries >= 3:
             logger.warning(
-                "Giving up on %s after %d RetryAfter retries", f.name, _retries)
+                "Giving up on %s after %d RetryAfter retries",
+                f.name,
+                _retries)
             return False
         wait = exc.retry_after + 1.0
         logger.info("RetryAfter on %s — waiting %.1fs (attempt %d)",
                     f.name, wait, _retries + 1)
-        await asyncio.sleep(wait)
-        return await _send_one(target, f, kind, _retries=_retries + 1)
+        if await _smart_sleep(wait, stop):
+            return False
+        return await _send_one(target, f, kind, stop, _retries=_retries + 1)
     except TimedOut:
         if _retries >= 4:
             logger.warning(
                 "Giving up on %s after %d TimedOut retries", f.name, _retries)
             return False
         wait = 5.0 * (2 ** _retries)
-        logger.info("TimedOut on %s — waiting %.1fs then retrying (attempt %d)",
-                    f.name, wait, _retries + 1)
-        await asyncio.sleep(wait)
-        return await _send_one(target, f, kind, _retries=_retries + 1)
+        logger.info(
+            "TimedOut on %s — waiting %.1fs then retrying (attempt %d)",
+            f.name,
+            wait,
+            _retries + 1)
+        if await _smart_sleep(wait, stop):
+            return False
+        return await _send_one(target, f, kind, stop, _retries=_retries + 1)
     except Exception:
         logger.warning("Failed to send %s as %s", f.name, kind, exc_info=True)
         return False
@@ -718,7 +753,11 @@ def _chunk_batch(batch: list[Path]) -> list[list[Path]]:
     return chunks
 
 
-async def flush(target, batch: list[Path], send_as: str) -> int:
+async def flush(
+        target,
+        batch: list[Path],
+        send_as: str,
+        stop: asyncio.Event | None = None) -> int:
     """Send the buffered batch and delete successfully-sent files.
 
     Returns the number of files actually sent.
@@ -734,20 +773,26 @@ async def flush(target, batch: list[Path], send_as: str) -> int:
     try:
         if send_as == "documents":
             for f in batch:
-                if await _send_one(target, f, "document"):
+                if stop and stop.is_set():
+                    return sent
+                if await _send_one(target, f, "document", stop):
                     sent += 1
                     sent_files.append(f)
 
         elif len(batch) == 1:
+            if stop and stop.is_set():
+                return sent
             f = batch[0]
             kind = {"photos": "photo", "videos": "video"}.get(
                 send_as) or file_kind(f)
-            if await _send_one(target, f, kind):
+            if await _send_one(target, f, kind, stop):
                 sent += 1
                 sent_files.append(f)
 
         else:
             for chunk in _chunk_batch(batch):
+                if stop and stop.is_set():
+                    break
                 for _retries in range(5):
                     file_handles: list = []
                     try:
@@ -789,16 +834,19 @@ async def flush(target, batch: list[Path], send_as: str) -> int:
                             logger.warning(
                                 "Giving up group send after %d RetryAfter retries", _retries)
                             for f in chunk:
+                                if stop and stop.is_set():
+                                    return sent
                                 kind = {"photos": "photo", "videos": "video"}.get(
                                     send_as) or file_kind(f)
-                                if await _send_one(target, f, kind):
+                                if await _send_one(target, f, kind, stop):
                                     sent += 1
                                     sent_files.append(f)
                             break
                         wait = exc.retry_after + 1.0
                         logger.info(
                             "RetryAfter on group send — waiting %.1fs", wait)
-                        await asyncio.sleep(wait)
+                        if await _smart_sleep(wait, stop):
+                            return sent
                     except TimedOut:
                         for fh in file_handles:
                             try:
@@ -809,16 +857,19 @@ async def flush(target, batch: list[Path], send_as: str) -> int:
                             logger.warning(
                                 "Giving up group send after %d TimedOut retries", _retries)
                             for f in chunk:
+                                if stop and stop.is_set():
+                                    return sent
                                 kind = {"photos": "photo", "videos": "video"}.get(
                                     send_as) or file_kind(f)
-                                if await _send_one(target, f, kind):
+                                if await _send_one(target, f, kind, stop):
                                     sent += 1
                                     sent_files.append(f)
                             break
                         wait = 5.0 * (2 ** _retries)
                         logger.info(
                             "TimedOut on group send — waiting %.1fs then retrying", wait)
-                        await asyncio.sleep(wait)
+                        if await _smart_sleep(wait, stop):
+                            return sent
                     except Exception as e:
                         for fh in file_handles:
                             try:
@@ -828,9 +879,11 @@ async def flush(target, batch: list[Path], send_as: str) -> int:
                         logger.warning(
                             "Group send failed: %s, falling back to individual sends", str(e))
                         for f in chunk:
+                            if stop and stop.is_set():
+                                return sent
                             kind = {"photos": "photo", "videos": "video"}.get(
                                 send_as) or file_kind(f)
-                            if await _send_one(target, f, kind):
+                            if await _send_one(target, f, kind, stop):
                                 sent += 1
                                 sent_files.append(f)
                         break
@@ -896,13 +949,19 @@ async def realtime_download(
         sleep=sleep, url=url, mode=mode, platform=platform,
     )
 
+    kwargs = {}
+    if os.name != "nt":
+        kwargs["preexec_fn"] = os.setsid
+
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
+        **kwargs
     )
 
-    # Drain stderr continuously to prevent deadlock if gallery-dl writes >64 KB of errors
+    # Drain stderr continuously to prevent deadlock if gallery-dl writes >64
+    # KB of errors
     stderr_buf = bytearray()
 
     async def _drain_stderr():
@@ -928,20 +987,25 @@ async def realtime_download(
 
     async def drain() -> None:
         nonlocal sent_count
-        if not buffer:
-            return
-        batch = list(buffer)
-        n = await flush(target, batch, send_as)
-        sent_count += n
-        buffer.clear()
+        if buffer and not stop.is_set():
+            batch = list(buffer)
+            n = await flush(target, batch, send_as, stop)
+            sent_count += n
+            buffer.clear()
 
     try:
         while True:
             if stop.is_set():
                 try:
-                    proc.kill()
+                    if os.name != "nt":
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    else:
+                        proc.kill()
                 except Exception:
-                    pass
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
                 break
 
             if proc.returncode is not None:
@@ -1076,7 +1140,7 @@ async def do_download(msg, choice: str, uid: int, uname: str,
     mode_map = {"1": "photos", "2": "videos", "3": "both", "4": "documents"}
     mode = mode_map.get(choice, "photos")
     label = {"photos": "🖼️ Photos", "videos": "🎬 Videos",
-             "both":   "📦 Both",   "documents": "📁 Files"}[mode]
+             "both": "📦 Both", "documents": "📁 Files"}[mode]
 
     ch = get_channel(uid)
     target = (bot, ch) if ch else msg
@@ -1119,11 +1183,11 @@ async def do_download(msg, choice: str, uid: int, uname: str,
                     total += n
                     if n > 0:
                         append_history(uid, {
-                            "date":     datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
                             "platform": platform,
-                            "user":     handle,
-                            "media":    m,
-                            "sent":     n,
+                            "user": handle,
+                            "media": m,
+                            "sent": n,
                         })
 
         elapsed = int((datetime.now() - started).total_seconds())
@@ -1164,11 +1228,11 @@ async def do_special_download(msg, url: str, platform: str, mode: str,
         )
         if n > 0:
             append_history(uid, {
-                "date":     datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
                 "platform": platform,
-                "user":     handle,
-                "media":    mode,
-                "sent":     n,
+                "user": handle,
+                "media": mode,
+                "sent": n,
             })
         if n == 0 and not stop.is_set():
             await status.set("ℹ️ *No new media found.* (already downloaded or private)", force=True)
@@ -1251,7 +1315,7 @@ async def _answer(q) -> None:
         pass
 
 
-# ── /start ────────────────────────────────────────────────────────────────────
+# ── /start ──────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     uid, uname, name = _user(update)
@@ -1266,7 +1330,7 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await send_menu(update.message, uid, uname, name)
 
 
-# ── /cleanup ──────────────────────────────────────────────────────────────────
+# ── /cleanup ────────────────────────────────────────────────────────────
 
 async def cmd_cleanup(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     uid, uname, name = _user(update)
@@ -1285,7 +1349,9 @@ async def cmd_cleanup(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 # ── cookie / source upload handler ───────────────────────────────────────────
 
-async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_document(
+        update: Update,
+        ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Accept a .txt cookies file or a sources export file."""
     uid, uname, name = _user(update)
     if not _is_allowed(uid):
@@ -1362,7 +1428,7 @@ async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
     await send_menu(update.message, uid, uname, name)
 
 
-# ── text / URL handler ────────────────────────────────────────────────────────
+# ── text / URL handler ──────────────────────────────────────────────────
 
 async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     uid, uname, name = _user(update)
@@ -1470,9 +1536,11 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await send_menu(update.message, uid, uname, name)
 
 
-# ── inline-button dispatcher ──────────────────────────────────────────────────
+# ── inline-button dispatcher ────────────────────────────────────────────
 
-async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_callback(
+        update: Update,
+        ctx: ContextTypes.DEFAULT_TYPE) -> None:
     q = update.callback_query
     uid, uname, name = _user(update)
     data = q.data or ""
@@ -1705,7 +1773,10 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 
     if data == "m_status":
         dl_mb = total_downloaded_mb(uid)
-        dl_str = f"{round(dl_mb / 1024, 2)} GB" if dl_mb >= 1024 else f"{dl_mb} MB"
+        dl_str = f"{
+            round(
+                dl_mb / 1024,
+                2)} GB" if dl_mb >= 1024 else f"{dl_mb} MB"
         active = "▶️ Running" if uid in ACTIVE_USERS else "⏸️ Idle"
         ch = get_channel(uid) or "Direct chat"
         text = (
@@ -1861,7 +1932,8 @@ async def cmd_admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_admin(uid):
         await update.message.reply_text("🔒 Admin access required.")
         return
-    mode = "🔓 Open (all users)" if not ALLOWED_USERS else f"🔒 Restricted ({len(ALLOWED_USERS)} users)"
+    mode = "🔓 Open (all users)" if not ALLOWED_USERS else f"🔒 Restricted ({
+        len(ALLOWED_USERS)} users)"
     text = (
         "🛡️ *Admin Panel*\n\n"
         f"• Access mode : {mode}\n"
@@ -2052,10 +2124,10 @@ def _import_sources(uid: int, text: str) -> tuple[int, int]:
     return added, skipped
 
 
-# ── Scheduled auto-download ───────────────────────────────────────────────────
+# ── Scheduled auto-download ─────────────────────────────────────────────
 
 SCHEDULE_OPTIONS = {
-    "6h":  6 * 3600,
+    "6h": 6 * 3600,
     "12h": 12 * 3600,
     "24h": 24 * 3600,
     "off": 0,
@@ -2152,10 +2224,10 @@ async def _restore_schedules(app: Application) -> None:
                 first=interval,
                 name=job_name,
                 data={
-                    "uid":     uid,
+                    "uid": uid,
                     "chat_id": chat_id,
-                    "uname":   s.get("schedule_uname", "unknown"),
-                    "name":    s.get("schedule_name",  "User"),
+                    "uname": s.get("schedule_uname", "unknown"),
+                    "name": s.get("schedule_name", "User"),
                 },
             )
             restored += 1
@@ -2198,12 +2270,12 @@ def main() -> None:
         .build()
     )
 
-    app.add_handler(CommandHandler("start",   cmd_start))
-    app.add_handler(CommandHandler("menu",    cmd_start))
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("menu", cmd_start))
     app.add_handler(CommandHandler("cleanup", cmd_cleanup))
-    app.add_handler(CommandHandler("admin",   cmd_admin))
-    app.add_handler(CommandHandler("link",    cmd_link))
-    app.add_handler(CommandHandler("export",  cmd_export))
+    app.add_handler(CommandHandler("admin", cmd_admin))
+    app.add_handler(CommandHandler("link", cmd_link))
+    app.add_handler(CommandHandler("export", cmd_export))
 
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
