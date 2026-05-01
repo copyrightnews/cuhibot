@@ -4,7 +4,7 @@ This is the history of every major fix and feature added to **Cuhi Bot**. We try
 
 ---
 
-## [1.3.4] — 2026-05-01
+## [1.3.4] — 2026-05-01 (FINAL STABLE)
 
 ### Async Architecture & Stability Patch
 - **Full Async I/O**: Migrated all blocking disk operations (JSON reading/writing, directory scans) to a dedicated thread pool (`ThreadPoolExecutor`). This makes the bot 100% responsive even during massive multi-user downloads.

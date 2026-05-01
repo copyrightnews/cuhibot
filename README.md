@@ -1,4 +1,6 @@
-# 🤖 Cuhi Bot
+# 🤖 Cuhi Bot (v1.3.4 Final Stable)
+
+![Status: Stable](https://img.shields.io/badge/Status-Stable%20%26%20Final-brightgreen)
 
 ### Reliable media archiving.
 
