@@ -237,9 +237,37 @@ def folder_mb(path: Path) -> float:
 
 
 def wipe_downloads(uid: int) -> float:
+    """Robustly delete the downloads folder and reset the session byte counter.
+    
+    [FIXED] Added total_bytes reset and individual file unlinking for Windows stability.
+    """
     root = udir(uid) / "downloads"
     freed = folder_mb(root)
-    shutil.rmtree(root, ignore_errors=True)
+    
+    # Reset the persistent counters so the menu reflects the cleanup
+    _add_downloaded_bytes_sync(uid, -100_000_000_000) # Large negative to hit 0
+    _add_sent_files_sync(uid, -1_000_000_000)        # Large negative to hit 0
+    
+    # [FIXED] Force settings reload by ensuring they are written as 0
+    path = settings_path(uid)
+    with locked_file(path):
+        try:
+            s = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            s["total_bytes"] = 0
+            s["total_sent_files"] = 0
+            path.write_text(json.dumps(s, indent=2), encoding="utf-8")
+        except: pass
+    
+    if root.exists():
+        # Individual unlink is safer on Windows than a raw rmtree
+        for f in root.rglob("*"):
+            if f.is_file():
+                try: f.unlink(missing_ok=True)
+                except: pass
+        shutil.rmtree(root, ignore_errors=True)
+    
+    # Ensure the root is clean for the next run
+    root.mkdir(parents=True, exist_ok=True)
     return freed
 
 
@@ -429,7 +457,7 @@ async def total_sent(uid: int) -> int:
 
 
 def _add_sent_files_sync(uid: int, count: int) -> None:
-    if count <= 0:
+    if count == 0:
         return
     path = settings_path(uid)
     with locked_file(path):
@@ -452,7 +480,7 @@ async def total_downloaded_mb(uid: int) -> float:
 
 
 def _add_downloaded_bytes_sync(uid: int, nbytes: int) -> None:
-    if nbytes <= 0:
+    if nbytes == 0:
         return
     path = settings_path(uid)
     with locked_file(path):
@@ -1672,8 +1700,8 @@ async def handle_callback(
 
     if data == "m_cleanup":
         freed = await asyncio.to_thread(wipe_downloads, uid)
-        await q.message.reply_text(f"🗑️ Freed *{freed} MB*.")
-        await send_menu(q.message, uid, uname, name)
+        # [FIXED] Edit current message instead of replying to avoid clutter
+        await q.message.edit_text(f"🗑️ *Cleanup Complete*\n\nFreed: `{freed} MB`\nStats have been reset.", parse_mode="Markdown", reply_markup=kb_back())
         return
 
     if data == "m_schedule":
