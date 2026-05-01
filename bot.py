@@ -14,6 +14,24 @@ Deploy      : Railway (DATA_ROOT / COOKIES_ROOT persistent volumes)
 # =============================================================================
 
 from __future__ import annotations
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
+from telegram.request import HTTPXRequest
+from telegram.error import BadRequest, RetryAfter, TimedOut
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaPhoto,
+    InputMediaVideo,
+    Message,
+    Update,
+)
 
 import asyncio
 import base64
@@ -38,27 +56,10 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-from telegram import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    InputMediaPhoto,
-    InputMediaVideo,
-    Message,
-    Update,
-)
-from telegram.error import BadRequest, RetryAfter, TimedOut
-from telegram.ext import (
-    Application,
-    CallbackQueryHandler,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
 
 TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
 
-DATA_ROOT    = Path(os.environ.get("DATA_ROOT",    "./data"))
+DATA_ROOT = Path(os.environ.get("DATA_ROOT",    "./data"))
 COOKIES_ROOT = Path(os.environ.get("COOKIES_ROOT", "./cookies"))
 
 # (profiles_filename, cookie_filename, request_sleep_seconds)
@@ -94,8 +95,8 @@ PLATFORM_URL_HINTS: dict[str, str] = {
 PHOTO_EXT = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"})
 VIDEO_EXT = frozenset({".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v"})
 
-MEDIA_GROUP_MAX     = 10
-STATUS_MIN_GAP      = 2.0       # seconds between status edits
+MEDIA_GROUP_MAX = 10
+STATUS_MIN_GAP = 2.0       # seconds between status edits
 TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # 50 MB Telegram Bot API cap
 
 # ── Security constants ───────────────────────────────────────────────────────
@@ -112,9 +113,9 @@ ADMIN_IDS: set[int] = (
 )
 
 MAX_PROFILES_PER_PLATFORM = 50
-MAX_URL_LENGTH            = 500
-MAX_COOKIE_FILE_BYTES     = 1_048_576   # 1 MB
-RATE_LIMIT_SECONDS        = 30
+MAX_URL_LENGTH = 500
+MAX_COOKIE_FILE_BYTES = 1_048_576   # 1 MB
+RATE_LIMIT_SECONDS = 30
 
 # State keys
 S_MAIN, S_ADD_URL, S_SET_CHANNEL, S_STORY, S_HIGHLIGHT = (
@@ -123,9 +124,9 @@ S_MAIN, S_ADD_URL, S_SET_CHANNEL, S_STORY, S_HIGHLIGHT = (
 
 # Runtime registries
 STOP_EVENTS: dict[int, asyncio.Event] = {}
-ACTIVE_USERS: set[int]                = set()
-_LAST_DOWNLOAD: dict[int, float]      = {}
-_TASKS: set[asyncio.Task]             = set()   # prevent GC of fire-and-forget tasks
+ACTIVE_USERS: set[int] = set()
+_LAST_DOWNLOAD: dict[int, float] = {}
+_TASKS: set[asyncio.Task] = set()   # prevent GC of fire-and-forget tasks
 
 
 # =============================================================================
@@ -164,7 +165,8 @@ def locked_file(target: Path):
             time.sleep(0.001)
 
     if fd is None:
-        raise TimeoutError(f"Could not acquire lock on {target} (lock never obtained)")
+        raise TimeoutError(
+            f"Could not acquire lock on {target} (lock never obtained)")
     try:
         yield
     finally:
@@ -241,7 +243,7 @@ def resolve_cookie(uid: int, platform: str) -> Path:
     Priority: per-user upload > global env-var cookie > missing.
     """
     _, cookie_name, _ = PLATFORMS[platform]
-    user_cookie   = cdir(uid) / cookie_name
+    user_cookie = cdir(uid) / cookie_name
     global_cookie = global_cookie_dir() / cookie_name
     if user_cookie.exists():
         return user_cookie
@@ -314,7 +316,8 @@ def set_channel(uid: int, value) -> None:
     path = settings_path(uid)
     with locked_file(path):
         try:
-            s = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            s = json.loads(path.read_text(encoding="utf-8")
+                           ) if path.exists() else {}
         except Exception:
             s = {}
         if value in (None, "", "clear"):
@@ -332,7 +335,7 @@ def cookie_summary(uid: int) -> str:
     ok = []
     for p in PLATFORMS:
         _, cookie_name, _ = PLATFORMS[p]
-        user_c   = cdir(uid) / cookie_name
+        user_c = cdir(uid) / cookie_name
         global_c = global_cookie_dir() / cookie_name
         if user_c.exists() or global_c.exists():
             ok.append(p)
@@ -347,7 +350,8 @@ def total_sent(uid: int) -> int:
     path = settings_path(uid)
     with locked_file(path):
         try:
-            s = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            s = json.loads(path.read_text(encoding="utf-8")
+                           ) if path.exists() else {}
         except Exception:
             s = {}
         if "total_sent_files" not in s:
@@ -363,7 +367,8 @@ def add_sent_files(uid: int, count: int) -> None:
     path = settings_path(uid)
     with locked_file(path):
         try:
-            s = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            s = json.loads(path.read_text(encoding="utf-8")
+                           ) if path.exists() else {}
         except Exception:
             s = {}
         s["total_sent_files"] = s.get("total_sent_files", 0) + count
@@ -380,7 +385,8 @@ def add_downloaded_bytes(uid: int, nbytes: int) -> None:
     path = settings_path(uid)
     with locked_file(path):
         try:
-            s = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+            s = json.loads(path.read_text(encoding="utf-8")
+                           ) if path.exists() else {}
         except Exception:
             s = {}
         s["total_bytes"] = s.get("total_bytes", 0) + nbytes
@@ -502,10 +508,10 @@ def _escape_md(text: str) -> str:
 
 def render_menu(uid: int, username: str, name: str) -> str:
     safe_username = _escape_md(username)
-    safe_name     = _escape_md(name)
+    safe_name = _escape_md(name)
     ch = get_channel(uid)
-    ch_line  = f"\n📡 Output: *{_escape_md(str(ch))}*" if ch else ""
-    cached   = total_downloaded_mb(uid)
+    ch_line = f"\n📡 Output: *{_escape_md(str(ch))}*" if ch else ""
+    cached = total_downloaded_mb(uid)
     if cached >= 1024:
         disk_line = f"\n💾 Downloaded: *{round(cached / 1024, 2)} GB*"
     else:
@@ -544,6 +550,7 @@ async def send_menu(msg, uid: int, username: str, name: str, *, edit=False) -> N
 # 6. STATUS THROTTLER
 # =============================================================================
 
+
 @dataclass
 class Status:
     """Rate-limited edit_text wrapper that respects RetryAfter."""
@@ -559,7 +566,7 @@ class Status:
             return
         try:
             await self.message.edit_text(text, parse_mode="Markdown")
-            self.last_at   = time.monotonic()
+            self.last_at = time.monotonic()
             self.last_text = text
         except RetryAfter as exc:
             self.last_at = time.monotonic() + exc.retry_after
@@ -592,20 +599,24 @@ def build_gdl_cmd(
     ]
 
     if mode == "photos":
-        cmd += ["--filter", "extension in ('jpg','jpeg','png','gif','webp','bmp')"]
+        cmd += ["--filter",
+                "extension in ('jpg','jpeg','png','gif','webp','bmp')"]
         effective = url
     elif mode == "videos":
-        cmd += ["--filter", "extension in ('mp4','webm','mkv','mov','avi','m4v')"]
+        cmd += ["--filter",
+                "extension in ('mp4','webm','mkv','mov','avi','m4v')"]
         effective = url
     elif mode == "documents":
-        cmd += ["--filter", "extension in ('jpg','jpeg','png','gif','webp','bmp','mp4','webm','mkv','mov','avi','m4v')"]
+        cmd += ["--filter",
+                "extension in ('jpg','jpeg','png','gif','webp','bmp','mp4','webm','mkv','mov','avi','m4v')"]
         effective = url
     elif mode == "stories":
         effective = stories_url_for(platform, url)
     elif mode == "highlights":
         effective = highlights_url_for(platform, url)
     elif mode == "both":
-        raise ValueError("build_gdl_cmd: 'both' must be split into 'photos'+'videos'")
+        raise ValueError(
+            "build_gdl_cmd: 'both' must be split into 'photos'+'videos'")
     else:
         effective = url
 
@@ -670,15 +681,18 @@ async def _send_one(target, f: Path, kind: str, *, _retries: int = 0) -> bool:
         return True
     except RetryAfter as exc:
         if _retries >= 3:
-            logger.warning("Giving up on %s after %d RetryAfter retries", f.name, _retries)
+            logger.warning(
+                "Giving up on %s after %d RetryAfter retries", f.name, _retries)
             return False
         wait = exc.retry_after + 1.0
-        logger.info("RetryAfter on %s — waiting %.1fs (attempt %d)", f.name, wait, _retries + 1)
+        logger.info("RetryAfter on %s — waiting %.1fs (attempt %d)",
+                    f.name, wait, _retries + 1)
         await asyncio.sleep(wait)
         return await _send_one(target, f, kind, _retries=_retries + 1)
     except TimedOut:
         if _retries >= 4:
-            logger.warning("Giving up on %s after %d TimedOut retries", f.name, _retries)
+            logger.warning(
+                "Giving up on %s after %d TimedOut retries", f.name, _retries)
             return False
         wait = 5.0 * (2 ** _retries)
         logger.info("TimedOut on %s — waiting %.1fs then retrying (attempt %d)",
@@ -726,7 +740,8 @@ async def flush(target, batch: list[Path], send_as: str) -> int:
 
         elif len(batch) == 1:
             f = batch[0]
-            kind = {"photos": "photo", "videos": "video"}.get(send_as) or file_kind(f)
+            kind = {"photos": "photo", "videos": "video"}.get(
+                send_as) or file_kind(f)
             if await _send_one(target, f, kind):
                 sent += 1
                 sent_files.append(f)
@@ -739,11 +754,13 @@ async def flush(target, batch: list[Path], send_as: str) -> int:
                         if send_as == "photos":
                             for f in chunk:
                                 file_handles.append(open(f, "rb"))
-                            group = [InputMediaPhoto(fh) for fh in file_handles]
+                            group = [InputMediaPhoto(fh)
+                                     for fh in file_handles]
                         elif send_as == "videos":
                             for f in chunk:
                                 file_handles.append(open(f, "rb"))
-                            group = [InputMediaVideo(fh) for fh in file_handles]
+                            group = [InputMediaVideo(fh)
+                                     for fh in file_handles]
                         else:  # mixed
                             group = []
                             for f in chunk:
@@ -757,46 +774,62 @@ async def flush(target, batch: list[Path], send_as: str) -> int:
                         sent += len(chunk)
                         sent_files.extend(chunk)
                         for fh in file_handles:
-                            try: fh.close()
-                            except Exception: pass
+                            try:
+                                fh.close()
+                            except Exception:
+                                pass
                         break
                     except RetryAfter as exc:
                         for fh in file_handles:
-                            try: fh.close()
-                            except Exception: pass
+                            try:
+                                fh.close()
+                            except Exception:
+                                pass
                         if _retries >= 3:
-                            logger.warning("Giving up group send after %d RetryAfter retries", _retries)
+                            logger.warning(
+                                "Giving up group send after %d RetryAfter retries", _retries)
                             for f in chunk:
-                                kind = {"photos": "photo", "videos": "video"}.get(send_as) or file_kind(f)
+                                kind = {"photos": "photo", "videos": "video"}.get(
+                                    send_as) or file_kind(f)
                                 if await _send_one(target, f, kind):
                                     sent += 1
                                     sent_files.append(f)
                             break
                         wait = exc.retry_after + 1.0
-                        logger.info("RetryAfter on group send — waiting %.1fs", wait)
+                        logger.info(
+                            "RetryAfter on group send — waiting %.1fs", wait)
                         await asyncio.sleep(wait)
                     except TimedOut:
                         for fh in file_handles:
-                            try: fh.close()
-                            except Exception: pass
+                            try:
+                                fh.close()
+                            except Exception:
+                                pass
                         if _retries >= 4:
-                            logger.warning("Giving up group send after %d TimedOut retries", _retries)
+                            logger.warning(
+                                "Giving up group send after %d TimedOut retries", _retries)
                             for f in chunk:
-                                kind = {"photos": "photo", "videos": "video"}.get(send_as) or file_kind(f)
+                                kind = {"photos": "photo", "videos": "video"}.get(
+                                    send_as) or file_kind(f)
                                 if await _send_one(target, f, kind):
                                     sent += 1
                                     sent_files.append(f)
                             break
                         wait = 5.0 * (2 ** _retries)
-                        logger.info("TimedOut on group send — waiting %.1fs then retrying", wait)
+                        logger.info(
+                            "TimedOut on group send — waiting %.1fs then retrying", wait)
                         await asyncio.sleep(wait)
                     except Exception as e:
                         for fh in file_handles:
-                            try: fh.close()
-                            except Exception: pass
-                        logger.warning("Group send failed: %s, falling back to individual sends", str(e))
+                            try:
+                                fh.close()
+                            except Exception:
+                                pass
+                        logger.warning(
+                            "Group send failed: %s, falling back to individual sends", str(e))
                         for f in chunk:
-                            kind = {"photos": "photo", "videos": "video"}.get(send_as) or file_kind(f)
+                            kind = {"photos": "photo", "videos": "video"}.get(
+                                send_as) or file_kind(f)
                             if await _send_one(target, f, kind):
                                 sent += 1
                                 sent_files.append(f)
@@ -871,8 +904,10 @@ async def realtime_download(
 
     # Drain stderr continuously to prevent deadlock if gallery-dl writes >64 KB of errors
     stderr_buf = bytearray()
+
     async def _drain_stderr():
-        if not proc.stderr: return
+        if not proc.stderr:
+            return
         try:
             while True:
                 chunk = await proc.stderr.read(4096)
@@ -1039,9 +1074,9 @@ def _release(uid: int, ev: asyncio.Event) -> None:
 async def do_download(msg, choice: str, uid: int, uname: str,
                       name: str, bot, stop: asyncio.Event) -> None:
     mode_map = {"1": "photos", "2": "videos", "3": "both", "4": "documents"}
-    mode     = mode_map.get(choice, "photos")
-    label    = {"photos": "🖼️ Photos", "videos": "🎬 Videos",
-                "both":   "📦 Both",   "documents": "📁 Files"}[mode]
+    mode = mode_map.get(choice, "photos")
+    label = {"photos": "🖼️ Photos", "videos": "🎬 Videos",
+             "both":   "📦 Both",   "documents": "📁 Files"}[mode]
 
     ch = get_channel(uid)
     target = (bot, ch) if ch else msg
@@ -1053,7 +1088,7 @@ async def do_download(msg, choice: str, uid: int, uname: str,
     status = Status(first)
 
     started = datetime.now()
-    total   = 0
+    total = 0
 
     try:
         for platform, (_, _, sleep) in PLATFORMS.items():
@@ -1108,8 +1143,8 @@ async def do_download(msg, choice: str, uid: int, uname: str,
 async def do_special_download(msg, url: str, platform: str, mode: str,
                               uid: int, uname: str, name: str, bot,
                               stop: asyncio.Event) -> None:
-    label  = "📖 Stories" if mode == "stories" else "🌟 Highlights"
-    ch     = get_channel(uid)
+    label = "📖 Stories" if mode == "stories" else "🌟 Highlights"
+    ch = get_channel(uid)
     target = (bot, ch) if ch else msg
     handle = handle_from_url(url)
 
@@ -1169,6 +1204,7 @@ def start_download_task(uid: int, coro_func, *args) -> None:
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
+
 def _user(update: Update) -> tuple[int, str, str]:
     u = update.effective_user
     return u.id, u.username or "unknown", u.first_name or "User"
@@ -1197,7 +1233,8 @@ def _check_rate_limit(uid: int) -> tuple[bool, int]:
 
 def _prune_rate_limits() -> None:
     now = time.time()
-    stale = [k for k, v in _LAST_DOWNLOAD.items() if (now - v) > RATE_LIMIT_SECONDS]
+    stale = [k for k, v in _LAST_DOWNLOAD.items() if (now - v) >
+             RATE_LIMIT_SECONDS]
     for k in stale:
         _LAST_DOWNLOAD.pop(k, None)
 
@@ -1223,7 +1260,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             "🔒 *Access Denied*\n\nYou are not authorized to use this bot.",
             parse_mode="Markdown",
         )
-        logger.warning("Unauthorized access attempt by uid=%s username=%s", uid, uname)
+        logger.warning(
+            "Unauthorized access attempt by uid=%s username=%s", uid, uname)
         return
     await send_menu(update.message, uid, uname, name)
 
@@ -1303,7 +1341,8 @@ async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         tg_file = await doc.get_file()
         await tg_file.download_to_drive(str(dest))
     except Exception:
-        logger.exception("Cookie download failed for uid=%s platform=%s", uid, platform)
+        logger.exception(
+            "Cookie download failed for uid=%s platform=%s", uid, platform)
         await update.message.reply_text("❌ Failed to save the cookie file. Please try again.")
         return
     try:
@@ -1330,7 +1369,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed(uid):
         await update.message.reply_text("🔒 Access denied.")
         return
-    text  = (update.message.text or "").strip()
+    text = (update.message.text or "").strip()
     state = ctx.user_data.get("state", S_MAIN)
 
     if state == S_SET_CHANNEL:
@@ -1434,7 +1473,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 # ── inline-button dispatcher ──────────────────────────────────────────────────
 
 async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    q    = update.callback_query
+    q = update.callback_query
     uid, uname, name = _user(update)
     data = q.data or ""
     await _answer(q)
@@ -1490,7 +1529,8 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         _MAX_BUTTONS = 30
         display_urls = urls[:_MAX_BUTTONS]
         rows = [
-            [InlineKeyboardButton(f"❌ {u[:60]}", callback_data=f"del_{platform}_{i}")]
+            [InlineKeyboardButton(
+                f"❌ {u[:60]}", callback_data=f"del_{platform}_{i}")]
             for i, u in enumerate(display_urls)
         ]
         if len(urls) > _MAX_BUTTONS:
@@ -1524,7 +1564,10 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         if 0 <= idx < len(urls):
             removed = urls.pop(idx)
             write_profiles(uid, platform, urls)
-            await q.message.reply_text(f"✅ Removed: `{removed}`", parse_mode="Markdown")
+            try:
+                await q.message.edit_text(f"✅ Removed: `{removed}`", parse_mode="Markdown")
+            except Exception:
+                await q.message.reply_text(f"✅ Removed: `{removed}`", parse_mode="Markdown")
         await send_menu(q.message, uid, uname, name)
         return
 
@@ -1578,7 +1621,8 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     if data == "m_stories":
-        rows = [[InlineKeyboardButton("Instagram", callback_data="story_instagram")]]
+        rows = [[InlineKeyboardButton(
+            "Instagram", callback_data="story_instagram")]]
         rows.append([InlineKeyboardButton("🔙 Back", callback_data="m_back")])
         await q.message.edit_text(
             "📖 *Stories* — pick a platform:\n_(Currently only Instagram is supported)_",
@@ -1599,7 +1643,8 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     if data == "m_highlights":
-        rows = [[InlineKeyboardButton("Instagram", callback_data="hl_instagram")]]
+        rows = [[InlineKeyboardButton(
+            "Instagram", callback_data="hl_instagram")]]
         rows.append([InlineKeyboardButton("🔙 Back", callback_data="m_back")])
         await q.message.edit_text(
             "✨ *Highlights* — pick a platform:\n_(Currently only Instagram is supported)_",
@@ -1636,9 +1681,9 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         lines = []
         for e in entries[:20]:
             lines.append(
-                f"📅 `{e.get('date','-')}` | *{e.get('platform','-')}* "
-                f"› `{e.get('user','-')}` | {e.get('media','-')} | "
-                f"{e.get('sent',0)} file(s)"
+                f"📅 `{e.get('date', '-')}` | *{e.get('platform', '-')}* "
+                f"› `{e.get('user', '-')}` | {e.get('media', '-')} | "
+                f"{e.get('sent', 0)} file(s)"
             )
         _MAX = 3900
         full_text = "\n".join(lines)
@@ -1659,11 +1704,11 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     if data == "m_status":
-        dl_mb  = total_downloaded_mb(uid)
+        dl_mb = total_downloaded_mb(uid)
         dl_str = f"{round(dl_mb / 1024, 2)} GB" if dl_mb >= 1024 else f"{dl_mb} MB"
         active = "▶️ Running" if uid in ACTIVE_USERS else "⏸️ Idle"
-        ch     = get_channel(uid) or "Direct chat"
-        text   = (
+        ch = get_channel(uid) or "Direct chat"
+        text = (
             f"📊 *Status*\n\n"
             f"• State      : {active}\n"
             f"• Sources    : {total_profiles(uid)}\n"
@@ -1726,10 +1771,10 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
             job.schedule_removal()
 
         s = read_settings(uid)
-        s["schedule"]       = interval_key
+        s["schedule"] = interval_key
         s["schedule_chat_id"] = q.message.chat_id
         s["schedule_uname"] = uname
-        s["schedule_name"]  = name
+        s["schedule_name"] = name
         write_settings(uid, s)
 
         if interval_key == "off":
@@ -1741,7 +1786,8 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
                 interval=interval,
                 first=interval,
                 name=job_name,
-                data={"uid": uid, "chat_id": q.message.chat_id, "uname": uname, "name": name},
+                data={"uid": uid, "chat_id": q.message.chat_id,
+                      "uname": uname, "name": name},
             )
             await q.message.reply_text(
                 f"⏰ Scheduled download set to *every {interval_key}*.",
@@ -1761,7 +1807,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
         if not lines:
             await q.message.reply_text("ℹ️ No sources to export.")
             return
-        content     = "\n".join(lines)
+        content = "\n".join(lines)
         export_file = udir(uid) / "cuhibot_sources.txt"
         try:
             export_file.write_text(content, encoding="utf-8")
@@ -1782,6 +1828,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
 # =============================================================================
 # 12. MAIN & SUPPORTING FUNCTIONS
 # =============================================================================
+
 
 def bootstrap_env_cookies() -> None:
     """Read COOKIE_* env vars and write them as Netscape cookie files into
@@ -1878,7 +1925,7 @@ async def cmd_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     _record_download_time(uid)
 
     handle = handle_from_url(url)
-    ch     = get_channel(uid)
+    ch = get_channel(uid)
     target = (ctx.bot, ch) if ch else update.message
     cookie = resolve_cookie(uid, platform)
     _, _, sleep = PLATFORMS[platform]
@@ -1923,7 +1970,7 @@ async def cmd_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_export(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """/export — send all sources as a downloadable text file."""
-    uid, uname, name = _user(update)
+    uid, _, _ = _user(update)
     if not _is_allowed(uid):
         await update.message.reply_text("🔒 Access denied.")
         return
@@ -1940,7 +1987,7 @@ async def cmd_export(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("ℹ️ No sources to export. Add some first!")
         return
 
-    content     = "\n".join(lines)
+    content = "\n".join(lines)
     export_file = udir(uid) / "cuhibot_sources.txt"
     try:
         export_file.write_text(content, encoding="utf-8")
@@ -1962,10 +2009,10 @@ def _import_sources(uid: int, text: str) -> tuple[int, int]:
     """Parse an exported sources file and import URLs. Returns (added, skipped).
     Batches reads/writes: one read + one write per platform.
     """
-    added   = 0
+    added = 0
     skipped = 0
     pending: dict[str, list[str]] = {}
-    current_platform: str | None  = None
+    current_platform: str | None = None
 
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -1988,7 +2035,7 @@ def _import_sources(uid: int, text: str) -> tuple[int, int]:
             skipped += 1
 
     for plat, new_urls in pending.items():
-        existing     = read_profiles(uid, plat)
+        existing = read_profiles(uid, plat)
         existing_set = set(existing)
         for url in new_urls:
             if url in existing_set:
@@ -2008,7 +2055,7 @@ def _import_sources(uid: int, text: str) -> tuple[int, int]:
 # ── Scheduled auto-download ───────────────────────────────────────────────────
 
 SCHEDULE_OPTIONS = {
-    "6h":  6  * 3600,
+    "6h":  6 * 3600,
     "12h": 12 * 3600,
     "24h": 24 * 3600,
     "off": 0,
@@ -2019,10 +2066,8 @@ async def _scheduled_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Callback fired by JobQueue. Runs a full photos+videos download for the user.
     Wrapped in try/except so unhandled exceptions do not kill the repeating job.
     """
-    uid     = ctx.job.data["uid"]
+    uid = ctx.job.data["uid"]
     chat_id = ctx.job.data["chat_id"]
-    uname   = ctx.job.data.get("uname", "unknown")
-    name    = ctx.job.data.get("name", "User")
 
     if uid in ACTIVE_USERS:
         return
@@ -2033,7 +2078,7 @@ async def _scheduled_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
     STOP_EVENTS[uid] = ev
     ACTIVE_USERS.add(uid)
 
-    ch     = get_channel(uid)
+    ch = get_channel(uid)
     target = (ctx.bot, ch) if ch else (ctx.bot, chat_id)
 
     try:
@@ -2043,7 +2088,7 @@ async def _scheduled_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
             parse_mode="Markdown",
         )
         status = Status(first)
-        total  = 0
+        total = 0
 
         for platform, (_, _, sleep) in PLATFORMS.items():
             if ev.is_set():
@@ -2092,9 +2137,9 @@ async def _restore_schedules(app: Application) -> None:
             continue
         uid = int(user_dir.name)
         try:
-            s            = read_settings(uid)
+            s = read_settings(uid)
             interval_key = s.get("schedule", "off")
-            chat_id      = s.get("schedule_chat_id")
+            chat_id = s.get("schedule_chat_id")
             if interval_key == "off" or interval_key not in SCHEDULE_OPTIONS or not chat_id:
                 continue
             interval = SCHEDULE_OPTIONS[interval_key]
@@ -2117,24 +2162,27 @@ async def _restore_schedules(app: Application) -> None:
         except Exception:
             logger.exception("Failed to restore schedule for uid=%s", uid)
     if restored:
-        logger.info("Restored %d scheduled job(s) from persistent settings", restored)
+        logger.info(
+            "Restored %d scheduled job(s) from persistent settings", restored)
 
 
 def main() -> None:
     if TOKEN == "YOUR_BOT_TOKEN":
-        logger.critical("BOT_TOKEN not set! Set the BOT_TOKEN environment variable.")
+        logger.critical(
+            "BOT_TOKEN not set! Set the BOT_TOKEN environment variable.")
         return
 
     bootstrap_env_cookies()
 
     if ALLOWED_USERS:
-        logger.info("Security: restricted mode — %d allowed users", len(ALLOWED_USERS))
+        logger.info("Security: restricted mode — %d allowed users",
+                    len(ALLOWED_USERS))
     else:
-        logger.info("Security: open mode — all users allowed (set ALLOWED_USERS to restrict)")
+        logger.info(
+            "Security: open mode — all users allowed (set ALLOWED_USERS to restrict)")
     if ADMIN_IDS:
         logger.info("Security: %d admin(s) configured", len(ADMIN_IDS))
 
-    from telegram.request import HTTPXRequest
     request = HTTPXRequest(
         connect_timeout=15.0,
         read_timeout=30.0,
@@ -2159,7 +2207,8 @@ def main() -> None:
 
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND, handle_text))
 
     app.run_polling(allowed_updates=["message", "callback_query"])
 
