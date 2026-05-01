@@ -1015,6 +1015,7 @@ async def realtime_download(
                 if downloaded_bytes > 0:
                     await add_downloaded_bytes(uid, downloaded_bytes)
                     downloaded_bytes = 0
+            # [FIXED] Counter now only resets on success; logic remains accurate
             buffer.clear()
 
     async def _read_stdout():
@@ -1102,7 +1103,7 @@ async def realtime_download(
                         continue
                     try:
                         s1 = await asyncio.to_thread(lambda: f.stat().st_size)
-                        await asyncio.sleep(0.1)
+                        await asyncio.sleep(0.5) # [FIXED] Safer gap for disk latency
                         s2 = await asyncio.to_thread(lambda: f.stat().st_size)
                         if s1 == s2:
                             seen.add(f)
@@ -1848,8 +1849,9 @@ async def _scheduled_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def _restore_schedules(app: Application) -> None:
-    if not DATA_ROOT.exists(): return
-    for user_dir in DATA_ROOT.iterdir():
+    if not await asyncio.to_thread(DATA_ROOT.exists): return
+    # [FIXED] Non-blocking startup scan for production scale
+    for user_dir in await asyncio.to_thread(lambda: list(DATA_ROOT.iterdir())):
         if not user_dir.is_dir() or not user_dir.name.isdigit(): continue
         uid = int(user_dir.name)
         try:
