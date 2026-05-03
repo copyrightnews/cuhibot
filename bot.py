@@ -1040,9 +1040,6 @@ async def realtime_download(
             if n > 0:
                 sent_count += n
                 await add_sent_files(uid, n)
-                if downloaded_bytes > 0:
-                    await add_downloaded_bytes(uid, downloaded_bytes)
-                    downloaded_bytes = 0
             # [FIXED] Counter now only resets on success; logic remains accurate
             buffer.clear()
 
@@ -1063,7 +1060,9 @@ async def realtime_download(
                             seen.add(f)
                             buffer.append(f)
                             try:
-                                downloaded_bytes += f.stat().st_size
+                                sz = f.stat().st_size
+                                downloaded_bytes += sz
+                                await add_downloaded_bytes(uid, sz)
                             except OSError:
                                 pass
                             if len(buffer) >= MEDIA_GROUP_MAX:
@@ -1077,7 +1076,9 @@ async def realtime_download(
                         seen.add(f)
                         buffer.append(f)
                         try:
-                            downloaded_bytes += f.stat().st_size
+                            sz = f.stat().st_size
+                            downloaded_bytes += sz
+                            await add_downloaded_bytes(uid, sz)
                         except OSError:
                             pass
                         if len(buffer) >= MEDIA_GROUP_MAX:
@@ -1137,6 +1138,7 @@ async def realtime_download(
                             seen.add(f)
                             buffer.append(f)
                             downloaded_bytes += s1
+                            await add_downloaded_bytes(uid, s1)
                             if len(buffer) >= MEDIA_GROUP_MAX:
                                 await drain()
                     except (OSError, FileNotFoundError):
@@ -1161,7 +1163,9 @@ async def realtime_download(
                 seen.add(f)
                 buffer.append(f)
                 try:
-                    downloaded_bytes += await asyncio.to_thread(lambda: f.stat().st_size)
+                    sz = await asyncio.to_thread(lambda: f.stat().st_size)
+                    downloaded_bytes += sz
+                    await add_downloaded_bytes(uid, sz)
                 except OSError:
                     pass
 
