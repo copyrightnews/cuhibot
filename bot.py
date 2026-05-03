@@ -623,31 +623,38 @@ def _escape_md(text: str) -> str:
 async def render_menu(uid: int, username: str, name: str) -> str:
     safe_username = _escape_md(username)
     safe_name = _escape_md(name)
-    ch = await get_channel(uid)
-    ch_line = f"\n📡 Output: *{_escape_md(str(ch))}*" if ch else ""
     cached = await total_downloaded_mb(uid)
     if cached >= 1024:
-        disk_line = f"\n💾 Downloaded: *{round(cached / 1024, 2)} GB*"
+        stats_val = f"{round(cached / 1024, 2)} GB"
     else:
-        disk_line = f"\n💾 Downloaded: *{cached} MB*"
+        stats_val = f"{cached} MB"
     
-    t_sent = await total_sent(uid)
     t_prof = await total_profiles(uid)
-    c_sum = await cookie_summary(uid)
     
     return (
         f"@{safe_username}, {safe_name}\n"
         f"👤 ID: `{uid}`\n"
-        f"🤍 Free account\n"
-        f"✅ Downloaded Media: *{t_sent}*\n\n"
-        "📩 *Cuhi Bot* — downloader & forwarder for "
-        "Instagram, TikTok, Facebook, and X.\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f" 🗂 Sources : *{t_prof}*\n"
-        f" 🍪 Cookies : *{c_sum}*"
-        f"{ch_line}{disk_line}\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "👨‍💻 Developer: @copyrightnews"
+        "🤍 Free Account\n"
+        f"🎭 Sources: {t_prof}\n"
+        f"📊 Your Stats: {stats_val}\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "Cuhi Bot \\- @copyrightnews\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "A powerful, open\\-source media forwarder & downloader that automatically delivers content from RSS feeds and social networks — including TikTok, Instagram, YouTube, Twitter, Facebook, Telegram — directly to your Telegram chats or channels.\n\n"
+        "✨ Features:\n"
+        "🔀 Private, channel & group forwarding modes\n"
+        "🖼 Photos, videos & file delivery\n"
+        "♻️ Instant social media profile downloads\n"
+        "🔄 Fast refresh & real\\-time content syncing\n"
+        "🎙 Live stream & premiere support\n"
+        "♻️ Duplicate similarity filter\n"
+        "🔖 High\\-resolution stories & highlights download\n\n"
+        "❔ Getting Started\n"
+        "━ Add a data source (RSS, Instagram, TikTok, etc.)\n"
+        "━ Configure your message template and filters\n"
+        "━ Cuhi Bot will forward and download posts automatically\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🌐 Github.com/copyrightnews/cuhibot"
     )
 
 
