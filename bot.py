@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cuhi Bot v1.3.4 — production-hardened & async-optimized edition.
+Cuhi Bot v2.0.0 — production-hardened & async-optimized edition (Stable Release).
 
 Platforms   : Instagram, TikTok, Facebook, X (Twitter)
 Persistence : per-user JSON files with async-safe file locks
