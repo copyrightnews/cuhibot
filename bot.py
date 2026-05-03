@@ -632,14 +632,8 @@ async def render_menu(uid: int, username: str, name: str) -> str:
     t_prof = await total_profiles(uid)
     
     return (
-        f"@{safe_username}, {safe_name}\n"
-        f"👤 ID: `{uid}`\n"
-        "🤍 Free Account\n"
-        f"🎭 Sources: {t_prof}\n"
-        f"📊 Your Stats: {stats_val}\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━\n"
         "Cuhi Bot \\- @copyrightnews\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━\n"
         "A powerful, open\\-source media forwarder & downloader that automatically delivers content from RSS feeds and social networks — including TikTok, Instagram, YouTube, Twitter, Facebook, Telegram — directly to your Telegram chats or channels.\n\n"
         "✨ Features:\n"
         "🔀 Private, channel & group forwarding modes\n"
@@ -653,8 +647,13 @@ async def render_menu(uid: int, username: str, name: str) -> str:
         "━ Add a data source (RSS, Instagram, TikTok, etc.)\n"
         "━ Configure your message template and filters\n"
         "━ Cuhi Bot will forward and download posts automatically\n"
+        "🌐 Github.com/copyrightnews/cuhibot\n"
         "━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "🌐 Github.com/copyrightnews/cuhibot"
+        f"@{safe_username}, {safe_name}\n"
+        f"👤 ID: `{uid}`\n"
+        "🤍 Free Account\n"
+        f"🎭 Sources: {t_prof}\n"
+        f"📊 Your Stats: {stats_val}"
     )
 
 
