@@ -2251,9 +2251,43 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     start_mini_app_server()
-    app.job_queue.run_repeating(
-        poll_miniapp_queue, interval=5, first=3, name="miniapp_poll"
-    )
+    
+    if app.job_queue is not None:
+        app.job_queue.run_repeating(
+            poll_miniapp_queue, interval=5, first=3, name="miniapp_poll"
+        )
+    else:
+        # Fallback: asyncio background loop (no job-queue needed)
+        async def _poll_loop():
+            while True:
+                await asyncio.sleep(5)
+                try:
+                    for state_file in DATA_ROOT.glob("*/download_state.json"):
+                        try:
+                            uid = int(state_file.parent.name)
+                        except ValueError:
+                            continue
+                        state = read_dl_state(uid)
+                        if state.get("stop_requested") and state.get("running"):
+                            if uid in STOP_EVENTS:
+                                STOP_EVENTS[uid].set()
+                        elif state.get("queued") and not state.get("running") and uid not in ACTIVE_USERS:
+                            state.update({"queued": False, "running": True,
+                                          "started_at": time.time(), "progress": "Starting…"})
+                            write_dl_state(uid, state)
+                            t = asyncio.ensure_future(
+                                _run_miniapp_download(uid, state, app.bot)
+                            )
+                            _TASKS.add(t)
+                            t.add_done_callback(_TASKS.discard)
+                except Exception:
+                    pass
+
+        async def _start_poll_loop(application):
+            asyncio.ensure_future(_poll_loop())
+
+        app.post_init = _start_poll_loop
+
     app.run_polling(allowed_updates=["message", "callback_query"])
 
 
