@@ -2,589 +2,751 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Cuhi Bot</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Cuhi</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
-  :root {
-    --bg:      var(--tg-theme-bg-color, #1a1a2e);
-    --bg2:     var(--tg-theme-secondary-bg-color, #16213e);
-    --text:    var(--tg-theme-text-color, #eaeaea);
-    --hint:    var(--tg-theme-hint-color, #8899aa);
-    --link:    var(--tg-theme-link-color, #4fc3f7);
-    --btn:     var(--tg-theme-button-color, #5c6bc0);
-    --btn-txt: var(--tg-theme-button-text-color, #ffffff);
-    --accent:  #7c83fd;
-    --danger:  #ef5350;
-    --success: #66bb6a;
-    --warn:    #ffa726;
-    --radius:  12px;
-    --nav-h:   60px;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-         background: var(--bg); color: var(--text); height: 100dvh;
-         display: flex; flex-direction: column; overflow: hidden; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  /* ── Nav ── */
-  #nav { position: fixed; bottom: 0; left: 0; right: 0; height: var(--nav-h);
-         background: var(--bg2); display: flex; border-top: 1px solid rgba(255,255,255,.07);
-         z-index: 100; }
-  .nav-btn { flex: 1; display: flex; flex-direction: column; align-items: center;
-             justify-content: center; gap: 3px; cursor: pointer; font-size: 10px;
-             color: var(--hint); transition: color .2s; border: none; background: none; }
-  .nav-btn.active { color: var(--accent); }
-  .nav-btn svg { width: 22px; height: 22px; }
+:root {
+  --bg:    #000;
+  --bg2:   #1c1c1e;
+  --bg3:   #2c2c2e;
+  --bg4:   #3a3a3c;
+  --text:  #fff;
+  --text2: rgba(255,255,255,.55);
+  --text3: rgba(255,255,255,.25);
+  --sep:   rgba(255,255,255,.08);
+  --blue:  #0a84ff;
+  --green: #30d158;
+  --red:   #ff453a;
+  --org:   #ff9f0a;
+  --purp:  #bf5af2;
+  --teal:  #40c8e0;
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --tab-h:  82px;
+  --r-xl:   20px;
+  --r-lg:   16px;
+  --r-md:   12px;
+  --r-sm:   8px;
+  --font:   -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  --mono:   'SF Mono', 'Fira Code', monospace;
+}
 
-  /* ── Pages ── */
-  #pages { flex: 1; overflow: hidden; padding-bottom: var(--nav-h); }
-  .page  { display: none; height: 100%; overflow-y: auto; padding: 16px 14px 12px; }
-  .page.active { display: block; }
+html, body {
+  height: 100%; background: var(--bg);
+  color: var(--text); font-family: var(--font);
+  -webkit-font-smoothing: antialiased; overflow: hidden;
+}
 
-  /* ── Cards ── */
-  .card { background: var(--bg2); border-radius: var(--radius); padding: 14px;
-          margin-bottom: 12px; }
-  .card-title { font-size: 11px; font-weight: 600; text-transform: uppercase;
-                letter-spacing: .8px; color: var(--hint); margin-bottom: 10px; }
+/* ─ Shell ─ */
+#app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+#pages { flex: 1; position: relative; overflow: hidden; }
 
-  /* ── Stat tiles ── */
-  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
-  .tile  { background: var(--bg2); border-radius: var(--radius); padding: 14px 12px;
-           display: flex; flex-direction: column; gap: 4px; }
-  .tile-val  { font-size: 22px; font-weight: 700; color: var(--accent); }
-  .tile-lbl  { font-size: 11px; color: var(--hint); }
+.page {
+  position: absolute; inset: 0; overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: calc(var(--tab-h) + 8px);
+  opacity: 0; transform: translateY(8px);
+  transition: opacity .2s ease, transform .2s ease;
+  pointer-events: none;
+  -webkit-overflow-scrolling: touch;
+}
+.page.active { opacity: 1; transform: none; pointer-events: all; }
 
-  /* ── Disk bar ── */
-  .disk-bar-wrap { background: rgba(255,255,255,.08); border-radius: 6px;
-                   height: 8px; overflow: hidden; margin: 8px 0; }
-  .disk-bar-fill { height: 100%; border-radius: 6px; background: var(--accent);
-                   transition: width .5s; }
-  .disk-bar-fill.warn  { background: var(--warn); }
-  .disk-bar-fill.crit  { background: var(--danger); }
-  .disk-lbl { font-size: 11px; color: var(--hint); display: flex;
-              justify-content: space-between; }
+/* ─ Page header ─ */
+.ph {
+  position: sticky; top: 0; z-index: 10;
+  padding: 16px 20px 12px;
+  background: rgba(0,0,0,.85);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border-bottom: .5px solid var(--sep);
+}
+.ph-title { font-size: 28px; font-weight: 700; letter-spacing: -.5px; line-height: 1.1; }
+.ph-sub { font-size: 13px; color: var(--text2); margin-top: 2px; }
 
-  /* ── Running banner ── */
-  #dl-banner { display: none; background: linear-gradient(135deg,#1a237e,#283593);
-               border-radius: var(--radius); padding: 12px 14px; margin-bottom: 12px;
-               border: 1px solid rgba(124,131,253,.3); }
-  #dl-banner.show { display: flex; align-items: center; gap: 10px; }
-  .pulse { width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
-           animation: pulse 1.2s ease-in-out infinite; flex-shrink: 0; }
-  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.7)} }
-  #banner-txt { flex: 1; font-size: 13px; }
-  #stop-btn-banner { background: var(--danger); color: #fff; border: none;
-                     border-radius: 8px; padding: 6px 12px; font-size: 12px;
-                     font-weight: 600; cursor: pointer; flex-shrink: 0; }
+/* ─ Section ─ */
+.sec { padding: 0 16px; margin-top: 22px; }
+.sec-lbl {
+  font-size: 12px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .7px;
+  color: var(--text2); padding: 0 4px; margin-bottom: 7px;
+}
 
-  /* ── Buttons ── */
-  .btn { display: flex; align-items: center; justify-content: center; gap: 8px;
-         width: 100%; padding: 13px; border-radius: var(--radius); border: none;
-         font-size: 14px; font-weight: 600; cursor: pointer; transition: opacity .15s; }
-  .btn:active { opacity: .75; }
-  .btn-primary   { background: var(--btn); color: var(--btn-txt); }
-  .btn-danger    { background: var(--danger); color: #fff; }
-  .btn-secondary { background: rgba(255,255,255,.08); color: var(--text); }
-  .btn + .btn    { margin-top: 8px; }
-  .btn-sm { padding: 7px 12px; font-size: 12px; border-radius: 8px; width: auto; }
+/* ─ Card / Cell ─ */
+.card { background: var(--bg2); border-radius: var(--r-xl); overflow: hidden; }
+.card-pad { padding: 14px 16px; }
 
-  /* ── Inputs ── */
-  input, select, textarea {
-    width: 100%; background: rgba(255,255,255,.07); color: var(--text);
-    border: 1px solid rgba(255,255,255,.12); border-radius: 8px;
-    padding: 11px 12px; font-size: 14px; outline: none; font-family: inherit;
-  }
-  input:focus, select:focus, textarea:focus {
-    border-color: var(--accent);
-  }
-  select option { background: #1a1a2e; }
-  textarea { resize: vertical; min-height: 90px; }
-  label { font-size: 12px; color: var(--hint); display: block; margin-bottom: 5px; }
-  .field { margin-bottom: 12px; }
+.cell {
+  display: flex; align-items: center;
+  padding: 12px 16px; gap: 12px; min-height: 50px;
+  position: relative;
+}
+.cell + .cell::before {
+  content: ''; position: absolute;
+  top: 0; left: 56px; right: 0;
+  height: .5px; background: var(--sep);
+}
+.cell-icon {
+  width: 32px; height: 32px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 17px; flex-shrink: 0;
+}
+.cell-body { flex: 1; min-width: 0; }
+.cell-title { font-size: 16px; }
+.cell-sub { font-size: 12px; color: var(--text2); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell-right { color: var(--text2); font-size: 15px; flex-shrink: 0; }
+.chevron::after { content: '›'; font-size: 20px; color: var(--text3); }
 
-  /* ── Toggle ── */
-  .toggle-row { display: flex; align-items: center; justify-content: space-between;
-                padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.06); }
-  .toggle-row:last-child { border-bottom: none; }
-  .toggle-lbl { font-size: 13px; }
-  .toggle { position: relative; width: 42px; height: 24px; flex-shrink: 0; }
-  .toggle input { opacity: 0; width: 0; height: 0; }
-  .toggle-slider { position: absolute; inset: 0; background: rgba(255,255,255,.15);
-                   border-radius: 24px; cursor: pointer; transition: .25s; }
-  .toggle-slider:before { content: ''; position: absolute; width: 18px; height: 18px;
-                           left: 3px; top: 3px; background: #fff; border-radius: 50%;
-                           transition: .25s; }
-  .toggle input:checked + .toggle-slider { background: var(--accent); }
-  .toggle input:checked + .toggle-slider:before { transform: translateX(18px); }
+/* ─ Stat grid ─ */
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.stat-card { background: var(--bg2); border-radius: var(--r-xl); padding: 16px; }
+.stat-val {
+  font-size: 34px; font-weight: 700;
+  letter-spacing: -1.5px; line-height: 1;
+  margin-bottom: 4px;
+}
+.stat-lbl { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--text2); }
+.c-blue   { color: var(--blue); }
+.c-green  { color: var(--green); }
+.c-orange { color: var(--org); }
+.c-purple { color: var(--purp); }
 
-  /* ── Source list ── */
-  .src-item { display: flex; align-items: center; gap: 8px; padding: 9px 0;
-              border-bottom: 1px solid rgba(255,255,255,.06); }
-  .src-item:last-child { border-bottom: none; }
-  .src-url  { flex: 1; font-size: 12px; color: var(--hint); overflow: hidden;
-              text-overflow: ellipsis; white-space: nowrap; }
-  .src-del  { background: none; border: none; color: var(--danger); cursor: pointer;
-              font-size: 18px; padding: 0 4px; flex-shrink: 0; }
-  .plat-badge { font-size: 10px; background: rgba(124,131,253,.2); color: var(--accent);
-                border-radius: 4px; padding: 2px 6px; flex-shrink: 0; }
+/* ─ Disk ─ */
+.disk-hdr { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+.disk-lbl { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--text2); }
+.disk-num { font-size: 12px; color: var(--text2); font-variant-numeric: tabular-nums; }
+.disk-track { height: 8px; background: var(--bg4); border-radius: 4px; overflow: hidden; }
+.disk-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--blue), var(--teal)); transition: width .7s cubic-bezier(.4,0,.2,1); }
+.disk-fill.warn { background: linear-gradient(90deg, var(--org), var(--red)); }
+.disk-sub { display: flex; justify-content: space-between; font-size: 11px; color: var(--text2); margin-top: 6px; }
 
-  /* ── History ── */
-  .hist-item { padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.06); }
-  .hist-item:last-child { border-bottom: none; }
-  .hist-url  { font-size: 12px; color: var(--link); overflow: hidden;
-               text-overflow: ellipsis; white-space: nowrap; }
-  .hist-meta { font-size: 11px; color: var(--hint); margin-top: 3px;
-               display: flex; gap: 10px; }
+/* ─ Banner ─ */
+.banner {
+  display: none; align-items: center; gap: 12px;
+  background: rgba(48,209,88,.1);
+  border: .5px solid rgba(48,209,88,.3);
+  border-radius: var(--r-xl); padding: 14px 16px;
+}
+.banner.show { display: flex; }
+.pulse {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--green); flex-shrink: 0;
+  animation: pulse-anim 1.5s ease-in-out infinite;
+}
+@keyframes pulse-anim {
+  0%,100% { box-shadow: 0 0 0 0 rgba(48,209,88,.5); }
+  50%      { box-shadow: 0 0 0 8px rgba(48,209,88,0); }
+}
+.banner-body { flex: 1; }
+.banner-title { font-size: 14px; font-weight: 600; color: var(--green); }
+.banner-sub   { font-size: 12px; color: var(--text2); margin-top: 1px; }
 
-  /* ── Cookie status ── */
-  .cookie-row { display: flex; align-items: center; gap: 8px; padding: 9px 0;
-                border-bottom: 1px solid rgba(255,255,255,.06); }
-  .cookie-row:last-child { border-bottom: none; }
-  .cookie-plat { font-size: 13px; flex: 1; }
-  .cookie-status { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
-  .cookie-status.ok  { background: rgba(102,187,106,.2); color: var(--success); }
-  .cookie-status.missing { background: rgba(239,83,80,.15); color: var(--danger); }
+/* ─ Buttons ─ */
+.btn {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  width: 100%; padding: 15px 20px; border-radius: var(--r-xl);
+  border: none; cursor: pointer;
+  font-family: var(--font); font-size: 16px; font-weight: 600;
+  transition: opacity .12s, transform .1s;
+  -webkit-tap-highlight-color: transparent; letter-spacing: -.1px;
+}
+.btn:active { opacity: .75; transform: scale(.97); }
+.btn-blue  { background: var(--blue);  color: #fff; }
+.btn-green { background: var(--green); color: #fff; }
+.btn-red   { background: rgba(255,69,58,.14); color: var(--red); }
+.btn-ghost { background: var(--bg2); color: var(--text); }
+.btn-sm { padding: 9px 18px; font-size: 14px; border-radius: var(--r-lg); width: auto; }
+.btn + .btn { margin-top: 8px; }
 
-  /* ── Section header ── */
-  .section-hdr { font-size: 13px; font-weight: 600; color: var(--text);
-                 margin: 16px 0 8px; display: flex; align-items: center; gap: 6px; }
-  .section-hdr:first-child { margin-top: 0; }
+/* ─ Input ─ */
+.inp {
+  width: 100%; background: var(--bg3); border: none; outline: none;
+  border-radius: var(--r-md); padding: 13px 14px;
+  font-family: var(--font); font-size: 16px; color: var(--text);
+  -webkit-appearance: none;
+}
+.inp::placeholder { color: var(--text3); }
+textarea.inp { resize: none; min-height: 96px; font-family: var(--mono); font-size: 12px; }
+.inp-row { display: flex; gap: 8px; align-items: center; }
+.inp-row .inp { flex: 1; }
 
-  /* ── Toast ── */
-  #toast { position: fixed; bottom: calc(var(--nav-h) + 14px); left: 50%; transform: translateX(-50%);
-           background: rgba(30,30,50,.95); color: #fff; padding: 10px 18px;
-           border-radius: 20px; font-size: 13px; pointer-events: none;
-           opacity: 0; transition: opacity .25s; z-index: 999; white-space: nowrap;
-           backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,.1); }
-  #toast.show { opacity: 1; }
+/* ─ Segmented ─ */
+.seg { display: flex; background: var(--bg3); border-radius: var(--r-sm); padding: 2px; gap: 2px; }
+.seg-btn {
+  flex: 1; padding: 7px 4px; background: none; border: none; cursor: pointer;
+  font-family: var(--font); font-size: 12px; font-weight: 500;
+  color: var(--text2); border-radius: 6px;
+  transition: background .12s, color .12s;
+  -webkit-tap-highlight-color: transparent; white-space: nowrap;
+}
+.seg-btn.active { background: var(--bg4); color: var(--text); font-weight: 600; }
 
-  /* ── Loading ── */
-  .spinner { display: inline-block; width: 20px; height: 20px;
-             border: 2px solid rgba(255,255,255,.2); border-top-color: var(--accent);
-             border-radius: 50%; animation: spin .7s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
+/* ─ Toggle ─ */
+.tog { position: relative; width: 51px; height: 31px; flex-shrink: 0; }
+.tog input { opacity: 0; width: 0; height: 0; }
+.tog-track {
+  position: absolute; inset: 0; background: var(--bg4);
+  border-radius: 16px; transition: background .2s; cursor: pointer;
+}
+.tog-track::before {
+  content: ''; position: absolute;
+  width: 27px; height: 27px; left: 2px; top: 2px;
+  background: #fff; border-radius: 50%;
+  transition: transform .2s cubic-bezier(.4,0,.2,1);
+  box-shadow: 0 2px 5px rgba(0,0,0,.3);
+}
+.tog input:checked + .tog-track { background: var(--green); }
+.tog input:checked + .tog-track::before { transform: translateX(20px); }
 
-  /* ── Media picker ── */
-  .media-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .media-opt  { background: rgba(255,255,255,.06); border: 2px solid transparent;
-                border-radius: var(--radius); padding: 14px 8px;
-                text-align: center; cursor: pointer; transition: .2s; }
-  .media-opt.selected { border-color: var(--accent); background: rgba(124,131,253,.15); }
-  .media-opt-icon { font-size: 24px; }
-  .media-opt-lbl  { font-size: 12px; color: var(--hint); margin-top: 4px; }
+/* ─ Badge ─ */
+.bdg {
+  display: inline-flex; align-items: center;
+  padding: 3px 9px; border-radius: 100px;
+  font-size: 11px; font-weight: 700; flex-shrink: 0;
+}
+.bdg-ig  { background: rgba(225,48,108,.2); color: #e1306c; }
+.bdg-tt  { background: rgba(255,255,255,.1); color: var(--text); }
+.bdg-fb  { background: rgba(66,103,178,.2); color: #4a7bd8; }
+.bdg-x   { background: rgba(255,255,255,.08); color: var(--text2); }
+.bdg-unk { background: var(--bg3); color: var(--text2); }
+.bdg-grn { background: rgba(48,209,88,.15); color: var(--green); }
+.bdg-gry { background: var(--bg3); color: var(--text2); }
 
-  /* ── Empty state ── */
-  .empty { text-align: center; padding: 40px 20px; color: var(--hint); font-size: 13px; }
-  .empty-icon { font-size: 36px; margin-bottom: 10px; }
+/* ─ Tab bar ─ */
+#tabbar {
+  height: calc(var(--tab-h));
+  padding-bottom: var(--safe-b);
+  background: rgba(16,16,16,.92);
+  backdrop-filter: blur(30px) saturate(180%);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  border-top: .5px solid var(--sep);
+  display: flex; flex-shrink: 0;
+}
+.tab {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 3px; padding-top: 8px;
+  background: none; border: none; cursor: pointer;
+  color: var(--text2); font-size: 10px; font-family: var(--font);
+  -webkit-tap-highlight-color: transparent; transition: color .15s;
+}
+.tab.active { color: var(--blue); }
+.tab svg { width: 24px; height: 24px; }
+.tab-lbl { font-weight: 500; letter-spacing: .1px; }
+
+/* ─ Toast ─ */
+#toast {
+  position: fixed;
+  bottom: calc(var(--tab-h) + 12px); left: 50%;
+  transform: translateX(-50%) translateY(16px);
+  background: rgba(36,36,36,.96);
+  backdrop-filter: blur(20px);
+  color: #fff; padding: 10px 20px; border-radius: 100px;
+  font-size: 14px; font-weight: 500;
+  opacity: 0; transition: opacity .2s, transform .2s;
+  pointer-events: none; white-space: nowrap; z-index: 9999;
+  border: .5px solid rgba(255,255,255,.1);
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ─ Gate ─ */
+#gate {
+  display: none; position: fixed; inset: 0; z-index: 9999;
+  background: var(--bg); flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 18px; padding: 40px; text-align: center;
+}
+#gate.show { display: flex; }
+.gate-ico { font-size: 60px; }
+.gate-ttl { font-size: 24px; font-weight: 700; letter-spacing: -.4px; }
+.gate-sub { font-size: 15px; color: var(--text2); line-height: 1.5; }
+
+/* ─ Empty ─ */
+.empty { padding: 44px 20px; text-align: center; }
+.empty-ico { font-size: 42px; margin-bottom: 12px; }
+.empty-ttl { font-size: 17px; font-weight: 600; margin-bottom: 6px; }
+.empty-sub { font-size: 14px; color: var(--text2); }
+
+/* ─ Utils ─ */
+.mt8  { margin-top: 8px; }
+.mt10 { margin-top: 10px; }
+.mt12 { margin-top: 12px; }
+.del-btn {
+  background: none; border: none; cursor: pointer;
+  color: var(--red); font-size: 22px; line-height: 1;
+  padding: 2px 6px; flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
 </style>
 </head>
 <body>
 
-<!-- Pages -->
-<div id="pages">
+<div id="gate">
+  <div class="gate-ico">📱</div>
+  <div class="gate-ttl">Open in Telegram</div>
+  <div class="gate-sub">This panel only works inside Telegram.<br>Open it via @cuhibot to access your data.</div>
+</div>
 
-  <!-- Home -->
-  <div class="page active" id="p-home">
-    <div id="dl-banner">
-      <div class="pulse"></div>
-      <div id="banner-txt">Download running…</div>
-      <button id="stop-btn-banner" onclick="stopDownload()">Stop</button>
-    </div>
-    <div class="tiles">
-      <div class="tile"><div class="tile-val" id="stat-sources">—</div><div class="tile-lbl">Sources</div></div>
-      <div class="tile"><div class="tile-val" id="stat-sent">—</div><div class="tile-lbl">Files Sent</div></div>
-      <div class="tile"><div class="tile-val" id="stat-mb">—</div><div class="tile-lbl">Downloaded MB</div></div>
-      <div class="tile"><div class="tile-val" id="stat-hist">—</div><div class="tile-lbl">History</div></div>
-    </div>
-    <div class="card">
-      <div class="card-title">Disk Usage</div>
-      <div class="disk-bar-wrap"><div class="disk-bar-fill" id="disk-bar" style="width:0%"></div></div>
-      <div class="disk-lbl"><span id="disk-used">—</span><span id="disk-free">—</span></div>
-    </div>
-    <div class="card">
-      <div class="card-title">Cookies Active</div>
-      <div id="cookie-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;"></div>
-    </div>
-    <div class="card">
-      <div class="card-title">Channel</div>
-      <div id="home-channel" style="font-size:13px;color:var(--hint);">Not set</div>
-    </div>
-  </div>
+<div id="app">
+  <div id="pages">
 
-  <!-- Sources -->
-  <div class="page" id="p-sources">
-    <div class="card">
-      <div class="card-title">Add Source</div>
-      <div class="field">
-        <label>Platform</label>
-        <select id="add-plat">
-          <option value="instagram">Instagram</option>
-          <option value="tiktok">TikTok</option>
-          <option value="facebook">Facebook</option>
-          <option value="x">X / Twitter</option>
-        </select>
+    <!-- HOME -->
+    <div class="page active" id="page-home">
+      <div class="ph">
+        <div class="ph-title">Cuhi Bot</div>
+        <div class="ph-sub" id="home-sub">Your dashboard</div>
       </div>
-      <div class="field">
-        <label>Profile URL</label>
-        <input id="add-url" type="url" placeholder="https://www.instagram.com/username">
-      </div>
-      <button class="btn btn-primary" onclick="addSource()">➕ Add Source</button>
-    </div>
-    <div id="sources-list"></div>
-  </div>
 
-  <!-- Download -->
-  <div class="page" id="p-download">
-    <div class="card">
-      <div class="card-title">Media Type</div>
-      <div class="media-grid">
-        <div class="media-opt selected" data-mode="both" onclick="selectMode(this)">
-          <div class="media-opt-icon">🔖</div>
-          <div class="media-opt-lbl">Both</div>
+      <div class="sec">
+        <div class="banner" id="dl-banner">
+          <div class="pulse"></div>
+          <div class="banner-body">
+            <div class="banner-title">Downloading…</div>
+            <div class="banner-sub">gallery-dl is running in background</div>
+          </div>
+          <button class="btn btn-red btn-sm" onclick="stopDownload()">Stop</button>
         </div>
-        <div class="media-opt" data-mode="photos" onclick="selectMode(this)">
-          <div class="media-opt-icon">🖼️</div>
-          <div class="media-opt-lbl">Photos</div>
+      </div>
+
+      <div class="sec">
+        <div class="stat-grid">
+          <div class="stat-card"><div class="stat-val c-blue"  id="s-sources">–</div><div class="stat-lbl">Sources</div></div>
+          <div class="stat-card"><div class="stat-val c-green" id="s-sent">–</div><div class="stat-lbl">Files Sent</div></div>
+          <div class="stat-card"><div class="stat-val c-orange" id="s-mb">–</div><div class="stat-lbl">Downloaded MB</div></div>
+          <div class="stat-card"><div class="stat-val c-purple" id="s-hist">–</div><div class="stat-lbl">History</div></div>
         </div>
-        <div class="media-opt" data-mode="videos" onclick="selectMode(this)">
-          <div class="media-opt-icon">🎬</div>
-          <div class="media-opt-lbl">Videos</div>
+      </div>
+
+      <div class="sec">
+        <div class="card card-pad">
+          <div class="disk-hdr">
+            <div class="disk-lbl">Disk Usage</div>
+            <div class="disk-num" id="disk-pct">–</div>
+          </div>
+          <div class="disk-track"><div class="disk-fill" id="disk-fill" style="width:0%"></div></div>
+          <div class="disk-sub">
+            <span id="disk-used">– used</span>
+            <span id="disk-free">– free</span>
+          </div>
         </div>
-        <div class="media-opt" data-mode="documents" onclick="selectMode(this)">
-          <div class="media-opt-icon">📁</div>
-          <div class="media-opt-lbl">As Files</div>
+      </div>
+
+      <div class="sec">
+        <div class="sec-lbl">Cookies Active</div>
+        <div class="card"><div class="cell" id="cookies-row"><div class="cell-body"><div class="cell-title" style="color:var(--text2)">Loading…</div></div></div></div>
+      </div>
+
+      <div class="sec">
+        <div class="sec-lbl">Output Channel</div>
+        <div class="card">
+          <div class="cell">
+            <div class="cell-icon" style="background:rgba(10,132,255,.18)">📡</div>
+            <div class="cell-body"><div class="cell-title" id="home-ch" style="font-size:15px">Not set</div></div>
+          </div>
         </div>
       </div>
     </div>
-    <div class="card">
-      <div class="card-title">Options</div>
-      <div class="toggle-row">
-        <span class="toggle-lbl">Include Stories</span>
-        <label class="toggle"><input type="checkbox" id="opt-stories"><span class="toggle-slider"></span></label>
+
+    <!-- SOURCES -->
+    <div class="page" id="page-sources">
+      <div class="ph">
+        <div class="ph-title">Sources</div>
+        <div class="ph-sub" id="src-count">0 profiles</div>
       </div>
-      <div class="toggle-row">
-        <span class="toggle-lbl">Include Highlights</span>
-        <label class="toggle"><input type="checkbox" id="opt-highlights"><span class="toggle-slider"></span></label>
+      <div class="sec">
+        <div class="sec-lbl">Add source</div>
+        <div class="card card-pad">
+          <div class="seg mt10" id="add-plat" style="margin-bottom:10px;margin-top:0">
+            <button class="seg-btn active" data-val="instagram" onclick="setSeg(this,'add-plat')">Instagram</button>
+            <button class="seg-btn" data-val="tiktok"    onclick="setSeg(this,'add-plat')">TikTok</button>
+            <button class="seg-btn" data-val="facebook"  onclick="setSeg(this,'add-plat')">Facebook</button>
+            <button class="seg-btn" data-val="x"         onclick="setSeg(this,'add-plat')">X</button>
+          </div>
+          <div class="inp-row">
+            <input class="inp" id="src-url" placeholder="Profile URL" type="url" autocomplete="off">
+            <button class="btn btn-blue btn-sm" onclick="addSource()">Add</button>
+          </div>
+        </div>
       </div>
-      <div class="toggle-row">
-        <span class="toggle-lbl">Force Re-download</span>
-        <label class="toggle"><input type="checkbox" id="opt-force"><span class="toggle-slider"></span></label>
+      <div class="sec">
+        <div class="sec-lbl">All sources</div>
+        <div class="card" id="sources-list">
+          <div class="empty"><div class="empty-ico">🔗</div><div class="empty-ttl">No sources</div><div class="empty-sub">Add a profile above</div></div>
+        </div>
       </div>
     </div>
-    <div id="dl-status-card" class="card" style="display:none;">
-      <div class="card-title">Status</div>
-      <div id="dl-status-txt" style="font-size:13px;color:var(--hint);"></div>
+
+    <!-- DOWNLOAD -->
+    <div class="page" id="page-download">
+      <div class="ph"><div class="ph-title">Download</div></div>
+      <div class="sec">
+        <div class="sec-lbl">Media type</div>
+        <div class="seg" id="mt-seg">
+          <button class="seg-btn active" data-val="all"    onclick="setSeg(this,'mt-seg')">Both</button>
+          <button class="seg-btn" data-val="photos"        onclick="setSeg(this,'mt-seg')">Photos</button>
+          <button class="seg-btn" data-val="videos"        onclick="setSeg(this,'mt-seg')">Videos</button>
+          <button class="seg-btn" data-val="files"         onclick="setSeg(this,'mt-seg')">As Files</button>
+        </div>
+      </div>
+      <div class="sec">
+        <div class="sec-lbl">Options</div>
+        <div class="card">
+          <div class="cell">
+            <div class="cell-icon" style="background:rgba(48,209,88,.18)">📖</div>
+            <div class="cell-body"><div class="cell-title">Include Stories</div></div>
+            <label class="tog"><input type="checkbox" id="opt-stories"><span class="tog-track"></span></label>
+          </div>
+          <div class="cell">
+            <div class="cell-icon" style="background:rgba(191,90,242,.18)">⭐</div>
+            <div class="cell-body"><div class="cell-title">Include Highlights</div></div>
+            <label class="tog"><input type="checkbox" id="opt-highlights"><span class="tog-track"></span></label>
+          </div>
+          <div class="cell">
+            <div class="cell-icon" style="background:rgba(255,69,58,.18)">🔄</div>
+            <div class="cell-body">
+              <div class="cell-title">Force Re-download</div>
+              <div class="cell-sub">Skips archive, re-fetches all</div>
+            </div>
+            <label class="tog"><input type="checkbox" id="opt-force"><span class="tog-track"></span></label>
+          </div>
+        </div>
+      </div>
+      <div class="sec">
+        <div class="card card-pad">
+          <div id="dl-status-txt" style="font-size:13px;color:var(--text2);text-align:center;margin-bottom:12px">Ready to download</div>
+          <button class="btn btn-green" id="start-btn" onclick="startDownload()">▶ &nbsp;Start Download</button>
+          <button class="btn btn-red"   id="stop-btn"  onclick="stopDownload()" style="display:none">⏹ &nbsp;Stop Download</button>
+          <div style="font-size:12px;color:var(--text2);text-align:center;margin-top:10px">Progress appears in your bot chat</div>
+        </div>
+      </div>
     </div>
-    <button class="btn btn-primary" id="start-dl-btn" onclick="startDownload()">▶️ Start Download</button>
-    <button class="btn btn-danger" id="stop-dl-btn" style="display:none;" onclick="stopDownload()">⏹ Stop Download</button>
-    <p style="font-size:11px;color:var(--hint);margin-top:10px;text-align:center;">
-      Download progress appears in your bot chat
-    </p>
+
+    <!-- HISTORY -->
+    <div class="page" id="page-history">
+      <div class="ph">
+        <div class="ph-title">History</div>
+        <div class="ph-sub" id="hist-count">Recent downloads</div>
+      </div>
+      <div class="sec">
+        <div class="card" id="history-list">
+          <div class="empty"><div class="empty-ico">📭</div><div class="empty-ttl">No history yet</div><div class="empty-sub">Downloads appear here</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="page" id="page-settings">
+      <div class="ph"><div class="ph-title">Settings</div></div>
+
+      <div class="sec">
+        <div class="sec-lbl">Output channel</div>
+        <div class="card card-pad">
+          <input class="inp" id="ch-inp" placeholder="@channel or -100xxxxxxx" style="margin-bottom:10px">
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-blue btn-sm" onclick="saveChannel()">Save</button>
+            <button class="btn btn-ghost btn-sm" onclick="clearChannel()">Clear</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="sec-lbl">Auto schedule</div>
+        <div class="card card-pad">
+          <input class="inp" id="cron-inp" placeholder="0 9 * * *  (daily at 9 AM)" style="font-family:var(--mono);font-size:14px;margin-bottom:10px">
+          <button class="btn btn-blue btn-sm" onclick="saveSchedule()">Save Schedule</button>
+        </div>
+      </div>
+
+      <div class="sec">
+        <div class="sec-lbl">Cookie status</div>
+        <div class="card" id="cookie-status"></div>
+      </div>
+
+      <div class="sec">
+        <div class="sec-lbl">Upload / delete cookie</div>
+        <div class="card card-pad">
+          <div class="seg" id="ck-plat" style="margin-bottom:12px">
+            <button class="seg-btn active" data-val="instagram" onclick="setSeg(this,'ck-plat')">IG</button>
+            <button class="seg-btn" data-val="tiktok"    onclick="setSeg(this,'ck-plat')">TT</button>
+            <button class="seg-btn" data-val="facebook"  onclick="setSeg(this,'ck-plat')">FB</button>
+            <button class="seg-btn" data-val="x"         onclick="setSeg(this,'ck-plat')">X</button>
+          </div>
+          <textarea class="inp" id="ck-data" placeholder="Paste Netscape cookie string…" style="margin-bottom:10px"></textarea>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-blue btn-sm" onclick="uploadCookie()">Upload</button>
+            <button class="btn btn-red btn-sm"  onclick="deleteCookie()">Delete</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
   </div>
 
-  <!-- History -->
-  <div class="page" id="p-history">
-    <div id="history-list"><div class="empty"><div class="empty-icon">📭</div>No history yet</div></div>
-  </div>
-
-  <!-- Settings -->
-  <div class="page" id="p-settings">
-    <div class="card">
-      <div class="card-title">Output Channel</div>
-      <div class="field">
-        <label>Channel ID or @username</label>
-        <input id="ch-input" type="text" placeholder="@mychannel or -100123456789">
-      </div>
-      <div style="display:flex;gap:8px;">
-        <button class="btn btn-primary" style="flex:1;" onclick="saveChannel()">Save</button>
-        <button class="btn btn-secondary" style="flex:1;" onclick="clearChannel()">Clear</button>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-title">Schedule (Cron)</div>
-      <div class="field">
-        <label>Cron expression (leave blank to disable)</label>
-        <input id="cron-input" type="text" placeholder="0 */6 * * *  (every 6h)">
-      </div>
-      <button class="btn btn-primary" onclick="saveSchedule()">Save Schedule</button>
-    </div>
-    <div class="card">
-      <div class="card-title">Cookies</div>
-      <div id="cookie-list"></div>
-      <div class="field" style="margin-top:12px;">
-        <label>Platform</label>
-        <select id="ck-plat">
-          <option value="instagram">Instagram</option>
-          <option value="tiktok">TikTok</option>
-          <option value="facebook">Facebook</option>
-          <option value="x">X / Twitter</option>
-        </select>
-      </div>
-      <div class="field">
-        <label>Cookie file content (Netscape format)</label>
-        <textarea id="ck-content" placeholder="# Netscape HTTP Cookie File&#10;.instagram.com	TRUE	/	FALSE	0	sessionid	..."></textarea>
-      </div>
-      <div style="display:flex;gap:8px;">
-        <button class="btn btn-primary" style="flex:1;" onclick="saveCookie()">Upload</button>
-        <button class="btn btn-danger" style="flex:1;" onclick="deleteCookie()">Delete</button>
-      </div>
-    </div>
-  </div>
-
-</div><!-- /pages -->
-
-<!-- Bottom Nav -->
-<nav id="nav">
-  <button class="nav-btn active" data-page="home" onclick="switchPage('home',this)">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
-    Home
-  </button>
-  <button class="nav-btn" data-page="sources" onclick="switchPage('sources',this)">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-    Sources
-  </button>
-  <button class="nav-btn" data-page="download" onclick="switchPage('download',this)">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0018 9h-1.26A8 8 0 103 16.29"/></svg>
-    Download
-  </button>
-  <button class="nav-btn" data-page="history" onclick="switchPage('history',this)">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="12 8 12 12 14 14"/><path d="M3.05 11a9 9 0 1 0 .5-4.5"/><polyline points="3 3 3 9 9 9"/></svg>
-    History
-  </button>
-  <button class="nav-btn" data-page="settings" onclick="switchPage('settings',this)">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-    Settings
-  </button>
-</nav>
+  <!-- Tab bar -->
+  <nav id="tabbar">
+    <button class="tab active" data-page="home" onclick="navTo('home')">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+      <span class="tab-lbl">Home</span>
+    </button>
+    <button class="tab" data-page="sources" onclick="navTo('sources')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+      <span class="tab-lbl">Sources</span>
+    </button>
+    <button class="tab" data-page="download" onclick="navTo('download')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      <span class="tab-lbl">Download</span>
+    </button>
+    <button class="tab" data-page="history" onclick="navTo('history')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      <span class="tab-lbl">History</span>
+    </button>
+    <button class="tab" data-page="settings" onclick="navTo('settings')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      <span class="tab-lbl">Settings</span>
+    </button>
+  </nav>
+</div>
 
 <div id="toast"></div>
 
 <script>
+// ── Init ─────────────────────────────────────────────────────────────
 const tg = window.Telegram?.WebApp;
-if (tg) { tg.ready(); tg.expand(); }
+if (tg) { tg.ready(); tg.expand(); try { tg.setHeaderColor('#000000'); } catch{} }
 
-const API = '';  // same-origin
-const HEADERS = () => ({
-  'Content-Type': 'application/json',
-  'X-Init-Data': tg?.initData || '',
-});
+const INIT = tg?.initData || '';
+const BASE = window.location.origin;
 
-// ── State ──────────────────────────────────────────────────────────────────
-let selectedMode = 'both';
-let pollTimer = null;
-
-// ── Navigation ─────────────────────────────────────────────────────────────
-function switchPage(name, btn) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('p-' + name).classList.add('active');
-  btn.classList.add('active');
-  if (name === 'home')     loadHome();
-  if (name === 'sources')  loadSources();
-  if (name === 'history')  loadHistory();
-  if (name === 'settings') loadSettings();
+// Block browser access - only allow inside Telegram
+if (!INIT) {
+  document.getElementById('gate').classList.add('show');
+  document.getElementById('app').style.display = 'none';
 }
 
-// ── Toast ──────────────────────────────────────────────────────────────────
-function toast(msg, duration=2400) {
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), duration);
-}
-
-// ── API helpers ────────────────────────────────────────────────────────────
+// ── API ───────────────────────────────────────────────────────────────
 async function api(method, path, body) {
-  try {
-    const opts = { method, headers: HEADERS() };
-    if (body) opts.body = JSON.stringify(body);
-    const r = await fetch(API + path, opts);
-    if (!r.ok) {
-      const e = await r.json().catch(() => ({}));
-      throw new Error(e.detail || r.statusText);
-    }
-    return await r.json();
-  } catch(e) {
-    toast('❌ ' + e.message);
-    throw e;
+  const res = await fetch(BASE + path, {
+    method,
+    headers: { 'Content-Type': 'application/json', 'X-Init-Data': INIT },
+    body: body != null ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error(e.detail || `HTTP ${res.status}`);
   }
+  return res.json();
 }
 
-// ── Home ───────────────────────────────────────────────────────────────────
+// ── Toast ─────────────────────────────────────────────────────────────
+let _tt;
+function toast(msg, ms=2400) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  clearTimeout(_tt); _tt = setTimeout(() => el.classList.remove('show'), ms);
+}
+
+// ── Seg ───────────────────────────────────────────────────────────────
+function setSeg(btn, id) {
+  document.querySelectorAll(`#${id} .seg-btn`).forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+const segVal = id => document.querySelector(`#${id} .seg-btn.active`)?.dataset.val;
+
+// ── Nav ───────────────────────────────────────────────────────────────
+const pageLoaders = { home: loadHome, sources: loadSources, history: loadHistory, settings: loadSettings };
+function navTo(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+  document.querySelector(`.tab[data-page="${page}"]`).classList.add('active');
+  pageLoaders[page]?.();
+}
+
+// ── Platform ──────────────────────────────────────────────────────────
+function platBadge(p) {
+  const cls = { instagram:'bdg-ig', tiktok:'bdg-tt', facebook:'bdg-fb', x:'bdg-x' }[p] || 'bdg-unk';
+  return `<span class="bdg ${cls}">${p || '?'}</span>`;
+}
+function detectPlat(url='') {
+  if (url.includes('instagram')) return 'instagram';
+  if (url.includes('tiktok'))    return 'tiktok';
+  if (url.includes('facebook'))  return 'facebook';
+  if (url.includes('x.com') || url.includes('twitter')) return 'x';
+  return 'unknown';
+}
+
+// ── Disk polling (real-time, every 5s) ───────────────────────────────
+let diskTmr;
+async function updateDisk() {
+  try {
+    const d = await api('GET', '/api/disk');
+    const fill = document.getElementById('disk-fill');
+    fill.style.width = d.percent_used + '%';
+    fill.classList.toggle('warn', d.percent_used > 80);
+    document.getElementById('disk-pct').textContent  = d.percent_used + '%';
+    document.getElementById('disk-used').textContent = d.used_gb + ' GB used';
+    document.getElementById('disk-free').textContent = d.free_gb + ' GB free';
+  } catch {}
+}
+function startDiskPoll() {
+  clearInterval(diskTmr);
+  updateDisk();
+  diskTmr = setInterval(updateDisk, 5000);
+}
+
+// ── Download status polling ───────────────────────────────────────────
+let dlTmr;
+function setDlUi(running) {
+  document.getElementById('dl-banner').classList.toggle('show', running);
+  document.getElementById('start-btn').style.display = running ? 'none' : '';
+  document.getElementById('stop-btn').style.display  = running ? '' : 'none';
+  document.getElementById('dl-status-txt').textContent = running ? 'Download running…' : 'Ready to download';
+}
+function startDlPoll() {
+  clearInterval(dlTmr);
+  dlTmr = setInterval(async () => {
+    try {
+      const s = await api('GET', '/api/download/status');
+      setDlUi(s.running);
+      if (!s.running) { clearInterval(dlTmr); dlTmr = null; }
+    } catch {}
+  }, 3000);
+}
+
+// ── HOME ──────────────────────────────────────────────────────────────
 async function loadHome() {
+  startDiskPoll();
   try {
-    const [stats, disk] = await Promise.all([
-      api('GET', '/api/stats'),
-      api('GET', '/api/disk'),
-    ]);
-    document.getElementById('stat-sources').textContent = stats.total_profiles;
-    document.getElementById('stat-sent').textContent    = stats.total_sent;
-    document.getElementById('stat-mb').textContent      = stats.total_mb;
-    document.getElementById('stat-hist').textContent    = stats.history_count;
+    const s = await api('GET', '/api/stats');
+    document.getElementById('s-sources').textContent = s.sources ?? 0;
+    document.getElementById('s-sent').textContent    = s.files_sent ?? 0;
+    document.getElementById('s-mb').textContent      = s.downloaded_mb ?? 0;
+    document.getElementById('s-hist').textContent    = s.history_count ?? 0;
+    document.getElementById('home-ch').textContent   = s.channel || 'Not set — configure in Settings';
+    document.getElementById('home-sub').textContent  = s.username ? `@${s.username}` : 'Your dashboard';
+    setDlUi(s.download_running);
+    if (s.download_running) startDlPoll();
 
-    const pct = disk.percent;
-    const bar = document.getElementById('disk-bar');
-    bar.style.width = pct + '%';
-    bar.className = 'disk-bar-fill' + (pct > 85 ? ' crit' : pct > 65 ? ' warn' : '');
-    document.getElementById('disk-used').textContent = disk.used_gb + ' GB used';
-    document.getElementById('disk-free').textContent = disk.free_gb + ' GB free';
-
-    const chips = document.getElementById('cookie-chips');
-    chips.innerHTML = stats.cookies.length
-      ? stats.cookies.map(c => `<span class="plat-badge">${c}</span>`).join('')
-      : '<span style="font-size:12px;color:var(--hint);">None configured</span>';
-
-    document.getElementById('home-channel').textContent =
-      stats.channel ? stats.channel : 'Not set — configure in Settings';
-
-    updateBanner(stats.download_active, stats.platform);
-  } catch(e) { /* toast already shown */ }
-}
-
-function updateBanner(running, platform) {
-  const banner = document.getElementById('dl-banner');
-  if (running) {
-    banner.classList.add('show');
-    document.getElementById('banner-txt').textContent =
-      `Downloading${platform && platform !== 'all' ? ' ' + platform : ''}…`;
-  } else {
-    banner.classList.remove('show');
-  }
-}
-
-// ── Sources ────────────────────────────────────────────────────────────────
-async function loadSources() {
-  const el = document.getElementById('sources-list');
-  el.innerHTML = '<div class="empty"><div class="spinner"></div></div>';
-  try {
-    const data = await api('GET', '/api/sources');
-    let html = '';
-    for (const [plat, urls] of Object.entries(data)) {
-      if (!urls.length) continue;
-      html += `<div class="section-hdr">${platIcon(plat)} ${cap(plat)}</div>`;
-      html += '<div class="card" style="padding:6px 14px;">';
-      html += urls.map(u => `
-        <div class="src-item">
-          <span class="src-url" title="${esc(u)}">${esc(u)}</span>
-          <button class="src-del" onclick="deleteSource('${esc(plat)}','${esc(u)}')">✕</button>
-        </div>`).join('');
-      html += '</div>';
+    // Cookies row
+    const row = document.getElementById('cookies-row');
+    if (s.cookies_active?.length) {
+      row.innerHTML = `<div class="cell-body" style="display:flex;flex-wrap:wrap;gap:6px;padding:2px 0">${s.cookies_active.map(p => platBadge(p)).join('')}</div>`;
+    } else {
+      row.innerHTML = `<div class="cell-body"><div class="cell-title" style="color:var(--text2);font-size:15px">No cookies configured</div></div>`;
     }
-    el.innerHTML = html || '<div class="empty"><div class="empty-icon">📭</div>No sources added yet</div>';
-  } catch(e) { el.innerHTML = '<div class="empty">Failed to load</div>'; }
+  } catch(e) { toast('⚠ ' + e.message); }
 }
 
+// ── SOURCES ───────────────────────────────────────────────────────────
+let allSrc = [];
+async function loadSources() {
+  try {
+    allSrc = await api('GET', '/api/sources');
+    renderSrc();
+  } catch(e) { toast('⚠ ' + e.message); }
+}
+function renderSrc() {
+  const el = document.getElementById('sources-list');
+  document.getElementById('src-count').textContent = `${allSrc.length} profile${allSrc.length !== 1 ? 's' : ''}`;
+  if (!allSrc.length) {
+    el.innerHTML = `<div class="empty"><div class="empty-ico">🔗</div><div class="empty-ttl">No sources</div><div class="empty-sub">Add a profile above</div></div>`;
+    return;
+  }
+  el.innerHTML = allSrc.map(s => `
+    <div class="cell">
+      ${platBadge(s.platform)}
+      <div class="cell-body">
+        <div class="cell-title" style="font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${s.url}</div>
+        ${s.file_count != null ? `<div class="cell-sub">${s.file_count} files</div>` : ''}
+      </div>
+      <button class="del-btn" onclick="delSrc(${JSON.stringify(s.url)},${JSON.stringify(s.platform)})">−</button>
+    </div>
+  `).join('');
+}
 async function addSource() {
-  const plat = document.getElementById('add-plat').value;
-  const url  = document.getElementById('add-url').value.trim();
+  const url  = document.getElementById('src-url').value.trim();
+  const plat = segVal('add-plat');
   if (!url) { toast('Enter a URL'); return; }
   try {
-    await api('POST', '/api/sources', { platform: plat, url });
-    document.getElementById('add-url').value = '';
-    toast('✅ Source added');
+    await api('POST', '/api/sources', { url, platform: plat });
+    document.getElementById('src-url').value = '';
+    tg?.HapticFeedback?.notificationOccurred('success');
+    toast('✓ Added');
     loadSources();
-  } catch(e) {}
+  } catch(e) { toast('⚠ ' + e.message); }
 }
-
-async function deleteSource(plat, url) {
-  if (!confirm('Remove this source?')) return;
+async function delSrc(url, platform) {
   try {
-    await api('DELETE', '/api/sources', { platform: plat, url });
-    toast('🗑️ Removed');
+    await api('DELETE', `/api/sources/${platform}/${encodeURIComponent(url)}`);
+    tg?.HapticFeedback?.notificationOccurred('warning');
+    toast('Removed');
     loadSources();
-  } catch(e) {}
+  } catch(e) { toast('⚠ ' + e.message); }
 }
 
-// ── Download ───────────────────────────────────────────────────────────────
-function selectMode(el) {
-  document.querySelectorAll('.media-opt').forEach(o => o.classList.remove('selected'));
-  el.classList.add('selected');
-  selectedMode = el.dataset.mode;
-}
-
+// ── DOWNLOAD ──────────────────────────────────────────────────────────
 async function startDownload() {
   try {
     await api('POST', '/api/download', {
-      mode:       selectedMode,
+      media_type: segVal('mt-seg'),
       stories:    document.getElementById('opt-stories').checked,
       highlights: document.getElementById('opt-highlights').checked,
       force:      document.getElementById('opt-force').checked,
     });
-    toast('▶️ Download started — check bot chat');
-    document.getElementById('start-dl-btn').style.display = 'none';
-    document.getElementById('stop-dl-btn').style.display  = '';
-    showDlStatus('Queued — bot will begin shortly…');
-    startPoll();
-  } catch(e) {}
+    toast('⬇ Download started');
+    tg?.HapticFeedback?.notificationOccurred('success');
+    setDlUi(true); startDlPoll();
+  } catch(e) { toast('⚠ ' + e.message); }
 }
-
 async function stopDownload() {
   try {
     await api('POST', '/api/download/stop');
-    toast('⏹ Stop signal sent');
-    stopPoll();
-    document.getElementById('start-dl-btn').style.display = '';
-    document.getElementById('stop-dl-btn').style.display  = 'none';
-    document.getElementById('dl-status-card').style.display = 'none';
-    updateBanner(false);
-  } catch(e) {}
+    setDlUi(false); clearInterval(dlTmr); dlTmr = null;
+    tg?.HapticFeedback?.notificationOccurred('warning');
+    toast('⏹ Stopped');
+  } catch(e) { toast('⚠ ' + e.message); }
 }
 
-function showDlStatus(txt) {
-  document.getElementById('dl-status-card').style.display = '';
-  document.getElementById('dl-status-txt').textContent = txt;
-}
-
-function startPoll() {
-  stopPoll();
-  pollTimer = setInterval(pollStatus, 3000);
-}
-function stopPoll() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-}
-
-async function pollStatus() {
-  try {
-    const s = await api('GET', '/api/download/status');
-    updateBanner(s.running, s.platform);
-    if (s.running) {
-      const ago = s.started_at ? Math.round((Date.now()/1000) - s.started_at) : 0;
-      showDlStatus(`Running${s.platform ? ' · ' + s.platform : ''} · ${fmtSec(ago)}`);
-      document.getElementById('start-dl-btn').style.display = 'none';
-      document.getElementById('stop-dl-btn').style.display  = '';
-    } else {
-      stopPoll();
-      document.getElementById('start-dl-btn').style.display = '';
-      document.getElementById('stop-dl-btn').style.display  = 'none';
-      showDlStatus('Idle');
-    }
-  } catch(e) {}
-}
-
-// ── History ────────────────────────────────────────────────────────────────
+// ── HISTORY ───────────────────────────────────────────────────────────
 async function loadHistory() {
   const el = document.getElementById('history-list');
-  el.innerHTML = '<div class="empty"><div class="spinner"></div></div>';
   try {
-    const data = await api('GET', '/api/history');
-    if (!data.history.length) {
-      el.innerHTML = '<div class="empty"><div class="empty-icon">📭</div>No history yet</div>';
+    const rows = await api('GET', '/api/history?limit=100');
+    document.getElementById('hist-count').textContent = rows.length + ' entries';
+    if (!rows.length) {
+      el.innerHTML = `<div class="empty"><div class="empty-ico">📭</div><div class="empty-ttl">No history yet</div><div class="empty-sub">Downloads appear here</div></div>`;
       return;
     }
-    el.innerHTML = '<div class="card" style="padding:6px 14px;">' +
-      data.history.map(h => `
-        <div class="hist-item">
-          <div class="hist-url">${esc(h.url || h.handle || '?')}</div>
-          <div class="hist-meta">
-            <span>${esc(h.platform || '')}</span>
-            <span>${h.sent || 0} files</span>
-            <span>${fmtDate(h.ts || h.time || '')}</span>
+    el.innerHTML = rows.map(r => {
+      // Handle all possible key names for source URL
+      const src  = r.source || r.url || r.profile || r.handle || r.source_url || r.account || '';
+      const file = r.filename || r.file || r.name || '';
+      const raw  = r.downloaded_at || r.date || r.timestamp || r.ts || '';
+      const plat = r.platform || detectPlat(src);
+      let dateStr = '';
+      if (raw) {
+        try {
+          dateStr = new Date(raw).toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+        } catch {}
+      }
+      // Display: show source URL prominently, filename as sub
+      const displaySrc = src || 'Unknown source';
+      return `
+        <div class="cell">
+          ${platBadge(plat)}
+          <div class="cell-body">
+            <div class="cell-title" style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${displaySrc}</div>
+            <div class="cell-sub">${file}${file && dateStr ? ' · ' : ''}${dateStr}</div>
           </div>
-        </div>`).join('') + '</div>';
-  } catch(e) { el.innerHTML = '<div class="empty">Failed to load</div>'; }
+        </div>
+      `;
+    }).join('');
+  } catch(e) { toast('⚠ ' + e.message); }
 }
 
-// ── Settings ───────────────────────────────────────────────────────────────
+// ── SETTINGS ──────────────────────────────────────────────────────────
 async function loadSettings() {
   try {
     const [ch, sched, cookies] = await Promise.all([
@@ -592,85 +754,67 @@ async function loadSettings() {
       api('GET', '/api/schedule'),
       api('GET', '/api/cookies'),
     ]);
-    document.getElementById('ch-input').value   = ch.channel   || '';
-    document.getElementById('cron-input').value = sched.schedule || '';
-    renderCookies(cookies);
-  } catch(e) {}
+    if (ch.channel_id) document.getElementById('ch-inp').value = ch.channel_id;
+    if (sched.cron)    document.getElementById('cron-inp').value = sched.cron;
+    renderCookieStatus(cookies);
+  } catch(e) { toast('⚠ ' + e.message); }
 }
-
-function renderCookies(cookies) {
-  const el = document.getElementById('cookie-list');
-  el.innerHTML = Object.entries(cookies).map(([plat, info]) => `
-    <div class="cookie-row">
-      <span class="cookie-plat">${platIcon(plat)} ${cap(plat)}</span>
-      <span class="cookie-status ${info.has_cookie ? 'ok' : 'missing'}">
-        ${info.has_cookie ? '✓ ' + info.source : '✗ missing'}
-      </span>
-    </div>`).join('');
+function renderCookieStatus(cookies) {
+  const el = document.getElementById('cookie-status');
+  const plats = ['instagram','tiktok','facebook','x'];
+  const has = new Set(cookies.map(c => c.platform));
+  el.innerHTML = plats.map(p => `
+    <div class="cell">
+      ${platBadge(p)}
+      <div class="cell-body"><div class="cell-title" style="font-size:15px">${has.has(p) ? 'Active' : 'Not set'}</div></div>
+      <span class="bdg ${has.has(p) ? 'bdg-grn' : 'bdg-gry'}">${has.has(p) ? '✓ Active' : '– Missing'}</span>
+    </div>
+  `).join('');
 }
-
 async function saveChannel() {
-  const v = document.getElementById('ch-input').value.trim();
   try {
-    await api('POST', '/api/channel', { channel: v });
-    toast('✅ Channel saved');
-  } catch(e) {}
+    await api('POST', '/api/channel', { channel_id: document.getElementById('ch-inp').value.trim() });
+    tg?.HapticFeedback?.notificationOccurred('success');
+    toast('✓ Channel saved');
+  } catch(e) { toast('⚠ ' + e.message); }
 }
-
 async function clearChannel() {
-  document.getElementById('ch-input').value = '';
-  try {
-    await api('POST', '/api/channel', { channel: 'clear' });
-    toast('🗑️ Channel cleared');
-  } catch(e) {}
+  document.getElementById('ch-inp').value = '';
+  try { await api('POST', '/api/channel', { channel_id: '' }); toast('Cleared'); } catch(e) { toast('⚠ ' + e.message); }
 }
-
 async function saveSchedule() {
-  const v = document.getElementById('cron-input').value.trim();
+  const cron = document.getElementById('cron-inp').value.trim();
   try {
-    await api('POST', '/api/schedule', { cron: v });
-    toast(v ? '✅ Schedule saved' : '🗑️ Schedule cleared');
-  } catch(e) {}
+    await api('POST', '/api/schedule', { cron, enabled: !!cron });
+    tg?.HapticFeedback?.notificationOccurred('success');
+    toast(cron ? '✓ Schedule saved' : 'Schedule cleared');
+  } catch(e) { toast('⚠ ' + e.message); }
 }
-
-async function saveCookie() {
-  const plat    = document.getElementById('ck-plat').value;
-  const content = document.getElementById('ck-content').value.trim();
-  if (!content) { toast('Paste cookie content first'); return; }
+async function uploadCookie() {
+  const data = document.getElementById('ck-data').value.trim();
+  const plat = segVal('ck-plat');
+  if (!data) { toast('Paste cookie data first'); return; }
   try {
-    await api('POST', '/api/cookies', { platform: plat, content });
-    document.getElementById('ck-content').value = '';
-    toast('✅ Cookie uploaded');
-    const cookies = await api('GET', '/api/cookies');
-    renderCookies(cookies);
-  } catch(e) {}
+    await api('POST', '/api/cookies', { platform: plat, cookie_data: data });
+    document.getElementById('ck-data').value = '';
+    tg?.HapticFeedback?.notificationOccurred('success');
+    toast(`✓ ${plat} cookie saved`);
+    const ck = await api('GET', '/api/cookies');
+    renderCookieStatus(ck);
+  } catch(e) { toast('⚠ ' + e.message); }
 }
-
 async function deleteCookie() {
-  const plat = document.getElementById('ck-plat').value;
-  if (!confirm(`Delete ${plat} cookie?`)) return;
+  const plat = segVal('ck-plat');
   try {
-    await api('DELETE', '/api/cookies', { platform: plat });
-    toast('🗑️ Cookie deleted');
-    const cookies = await api('GET', '/api/cookies');
-    renderCookies(cookies);
-  } catch(e) {}
+    await api('DELETE', `/api/cookies/${plat}`);
+    toast(`${plat} deleted`);
+    const ck = await api('GET', '/api/cookies');
+    renderCookieStatus(ck);
+  } catch(e) { toast('⚠ ' + e.message); }
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
-function cap(s)  { return s.charAt(0).toUpperCase() + s.slice(1); }
-function esc(s)  { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function platIcon(p) { return {instagram:'📸',tiktok:'🎵',facebook:'👤',x:'🐦'}[p] || '🌐'; }
-function fmtSec(s) { if (s < 60) return s+'s'; if (s < 3600) return Math.floor(s/60)+'m'; return Math.floor(s/3600)+'h'; }
-function fmtDate(ts) {
-  if (!ts) return '';
-  try { return new Date(typeof ts === 'number' ? ts*1000 : ts).toLocaleDateString(); }
-  catch(e) { return String(ts).slice(0,10); }
-}
-
-// ── Init ───────────────────────────────────────────────────────────────────
-loadHome();
-pollStatus();
+// ── Boot ──────────────────────────────────────────────────────────────
+if (INIT) loadHome();
 </script>
 </body>
 </html>

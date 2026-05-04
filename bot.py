@@ -2050,19 +2050,18 @@ async def _restore_schedules(app: Application) -> None:
 
 async def _run_miniapp_download(
     uid: int,
-    state: dict,
+    trigger: dict,
     bot,
 ) -> None:
     """
     Executes the download triggered by the Mini App.
-    Reads options from download_state.json, runs realtime_download per platform,
-    and writes progress back so the Mini App status poll stays accurate.
+    Reads options from trigger dict, runs realtime_download per platform.
     """
-    platform_filter = state.get("platform", "all")   # "all" | "instagram" | etc.
-    mode            = state.get("mode", "both")        # "both"|"photos"|"videos"
-    do_stories      = state.get("stories", False)
-    do_highlights   = state.get("highlights", False)
-    force           = state.get("force", False)
+    mode            = trigger.get("media_type", "both")
+    if mode == "all": mode = "both"
+    do_stories      = trigger.get("stories", False)
+    do_highlights   = trigger.get("highlights", False)
+    force           = trigger.get("force", False)
 
     # Map Mini App "mode" string to bot's internal mode string
     mode_map = {"both": "both", "photos": "photos", "videos": "videos",
@@ -2070,13 +2069,7 @@ async def _run_miniapp_download(
     send_as = mode_map.get(mode, "both")
 
     # Determine which platforms to run
-    platforms_to_run = (
-        list(PLATFORMS.keys())
-        if platform_filter == "all"
-        else [platform_filter]
-        if platform_filter in PLATFORMS
-        else list(PLATFORMS.keys())
-    )
+    platforms_to_run = list(PLATFORMS.keys())
 
     # Create a stop event for this download
     stop_event = asyncio.Event()
@@ -2110,17 +2103,6 @@ async def _run_miniapp_download(
 
                 for run_mode in run_modes:
                     if stop_event.is_set():
-                        break
-
-                    # Update progress in state file
-                    cur = read_dl_state(uid)
-                    cur["progress"] = f"Downloading {platform}/{handle} ({run_mode})…"
-                    cur["sent"] = total_sent_count
-                    write_dl_state(uid, cur)
-
-                    # Check stop_requested from Mini App Stop button
-                    if cur.get("stop_requested"):
-                        stop_event.set()
                         break
 
                     archive = archive_path(uid, platform, handle, run_mode)
@@ -2170,30 +2152,47 @@ async def _run_miniapp_download(
     finally:
         ACTIVE_USERS.discard(uid)
         STOP_EVENTS.pop(uid, None)
-        clear_dl_state(uid)
+        # Clear v2 running flag
+        flag = DATA_ROOT / str(uid) / "download_running"
+        flag.unlink(missing_ok=True)
 
 
 async def poll_miniapp_queue(context: ContextTypes.DEFAULT_TYPE) -> None:
-    files = list(DATA_ROOT.glob("*/download_state.json"))
-    if files:
-        logger.info("poll found %d state file(s): %s", len(files), [str(f) for f in files])
-    for state_file in files:
+    if not DATA_ROOT.exists():
+        return
+
+    # 1. Handle stops
+    for stop_file in DATA_ROOT.glob("*/stop_flag"):
         try:
-            uid = int(state_file.parent.name)
+            uid = int(stop_file.parent.name)
         except ValueError:
             continue
-        state = read_dl_state(uid)
-        logger.info("poll uid=%s state=%s", uid, state)
-        if state.get("stop_requested") and state.get("running"):
-            if uid in STOP_EVENTS:
-                STOP_EVENTS[uid].set()
-        elif state.get("queued") and not state.get("running") and uid not in ACTIVE_USERS:
-            state.update({"queued": False, "running": True,
-                          "started_at": time.time(), "progress": "Starting…"})
-            write_dl_state(uid, state)
-            t = asyncio.ensure_future(_run_miniapp_download(uid, state, context.bot))
-            _TASKS.add(t)
-            t.add_done_callback(_TASKS.discard)
+        if uid in STOP_EVENTS:
+            STOP_EVENTS[uid].set()
+        stop_file.unlink(missing_ok=True)
+
+    # 2. Handle new triggers
+    for trigger_file in DATA_ROOT.glob("*/download_trigger.json"):
+        try:
+            uid = int(trigger_file.parent.name)
+        except ValueError:
+            continue
+            
+        # Read the trigger
+        try:
+            trigger_data = json.loads(trigger_file.read_text(encoding="utf-8"))
+        except Exception:
+            trigger_data = {}
+            
+        trigger_file.unlink(missing_ok=True)
+        
+        if uid in ACTIVE_USERS:
+            continue
+
+        logger.info("poll found trigger for uid=%s", uid)
+        t = asyncio.ensure_future(_run_miniapp_download(uid, trigger_data, context.bot))
+        _TASKS.add(t)
+        t.add_done_callback(_TASKS.discard)
 
 
 def main() -> None:
@@ -2244,24 +2243,28 @@ def main() -> None:
             while True:
                 await asyncio.sleep(5)
                 try:
-                    for state_file in DATA_ROOT.glob("*/download_state.json"):
+                    # 1. Handle stops
+                    for stop_file in DATA_ROOT.glob("*/stop_flag"):
                         try:
-                            uid = int(state_file.parent.name)
-                        except ValueError:
-                            continue
-                        state = read_dl_state(uid)
-                        if state.get("stop_requested") and state.get("running"):
+                            uid = int(stop_file.parent.name)
                             if uid in STOP_EVENTS:
                                 STOP_EVENTS[uid].set()
-                        elif state.get("queued") and not state.get("running") and uid not in ACTIVE_USERS:
-                            state.update({"queued": False, "running": True,
-                                          "started_at": time.time(), "progress": "Starting…"})
-                            write_dl_state(uid, state)
-                            t = asyncio.ensure_future(
-                                _run_miniapp_download(uid, state, app.bot)
-                            )
-                            _TASKS.add(t)
-                            t.add_done_callback(_TASKS.discard)
+                            stop_file.unlink(missing_ok=True)
+                        except ValueError:
+                            continue
+
+                    # 2. Handle new triggers
+                    for trigger_file in DATA_ROOT.glob("*/download_trigger.json"):
+                        try:
+                            uid = int(trigger_file.parent.name)
+                            trigger_data = json.loads(trigger_file.read_text(encoding="utf-8"))
+                            trigger_file.unlink(missing_ok=True)
+                            if uid not in ACTIVE_USERS:
+                                t = asyncio.ensure_future(_run_miniapp_download(uid, trigger_data, app.bot))
+                                _TASKS.add(t)
+                                t.add_done_callback(_TASKS.discard)
+                        except Exception:
+                            continue
                 except Exception:
                     pass
 
