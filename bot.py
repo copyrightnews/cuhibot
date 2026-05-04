@@ -65,17 +65,17 @@ _IO_POOL = ThreadPoolExecutor(max_workers=4)
 TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
 
 import threading
-RAILWAY_DOMAIN = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
-MINI_APP_URL = f"https://{RAILWAY_DOMAIN}" if RAILWAY_DOMAIN else ""
+import server as _server_module
+domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+MINI_APP_URL = f"https://{domain}" if domain else ""
 
 def start_mini_app_server():
     if not MINI_APP_URL:
         logger.warning("RAILWAY_PUBLIC_DOMAIN not set — Mini App skipped")
         return
     try:
-        from server import start
         port = int(os.environ.get("PORT", 8080))
-        t = threading.Thread(target=start, args=(port,), daemon=True)
+        t = threading.Thread(target=_server_module.start, args=(port,), daemon=True)
         t.start()
         logger.info("Mini App server started → %s", MINI_APP_URL)
     except Exception as e:

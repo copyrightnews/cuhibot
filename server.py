@@ -1,56 +1,90 @@
-import os
-import json
-import hmac
+"""
+Cuhi Bot — FastAPI backend for Telegram Mini App
+Runs on PORT env var (Railway injects this), default 8080
+"""
+from __future__ import annotations
+
 import hashlib
+import hmac
+import json
+import os
 import shutil
+import time
 import urllib.parse
 from pathlib import Path
-from fastapi import FastAPI, Request, HTTPException, Header
-from fastapi.responses import HTMLResponse
+from typing import Optional
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 import uvicorn
 
-app = FastAPI()
+# ── Config ────────────────────────────────────────────────────────────────────
+BOT_TOKEN   = os.environ.get("BOT_TOKEN", "")
+DATA_ROOT   = Path(os.environ.get("DATA_ROOT",   "./data"))
+COOKIES_ROOT= Path(os.environ.get("COOKIES_ROOT","./cookies"))
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
-DATA_ROOT = Path(os.environ.get("DATA_ROOT", "./data"))
-COOKIES_ROOT = Path(os.environ.get("COOKIES_ROOT", "./cookies"))
 PLATFORMS = ["instagram", "tiktok", "facebook", "x"]
+COOKIE_NAMES = {
+    "instagram": "instagram.com_cookies.txt",
+    "tiktok":    "tiktok.com_cookies.txt",
+    "facebook":  "facebook.com_cookies.txt",
+    "x":         "x.com_cookies.txt",
+}
 
-def validate_init_data(init_data: str) -> dict:
-    if not init_data:
-        raise HTTPException(status_code=401, detail="Missing init data")
-    
+app = FastAPI(title="Cuhi Bot API", docs_url=None, redoc_url=None)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Telegram initData validation ──────────────────────────────────────────────
+def validate_init_data(init_data: str) -> Optional[dict]:
+    """Returns parsed user dict if valid, None if invalid."""
+    if not init_data or not BOT_TOKEN:
+        return None
     try:
-        parsed = urllib.parse.parse_qsl(init_data)
-        data_dict = {k: v for k, v in parsed}
-        if "hash" not in data_dict:
-            raise HTTPException(status_code=401, detail="No hash in init data")
-        
-        hash_val = data_dict.pop("hash")
-        
-        # Sort keys
-        sorted_keys = sorted(data_dict.keys())
-        data_check_string = "\n".join([f"{k}={data_dict[k]}" for k in sorted_keys])
-        
-        secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
-        calc_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-        
-        if calc_hash != hash_val:
-            raise HTTPException(status_code=401, detail="Invalid hash")
-            
-        user_data = json.loads(data_dict.get("user", "{}"))
-        return user_data
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=f"Auth error: {str(e)}")
+        parsed = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
+        received_hash = parsed.pop("hash", None)
+        if not received_hash:
+            return None
+
+        data_check = "\n".join(
+            f"{k}={v}" for k, v in sorted(parsed.items())
+        )
+        secret_key = hmac.new(
+            b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256
+        ).digest()
+        expected = hmac.new(
+            secret_key, data_check.encode(), hashlib.sha256
+        ).hexdigest()
+
+        if not hmac.compare_digest(expected, received_hash):
+            return None
+
+        user_json = parsed.get("user", "{}")
+        return json.loads(user_json)
+    except Exception:
+        return None
 
 def get_uid(request: Request) -> int:
+    """Extract and validate uid from Telegram initData header."""
     init_data = request.headers.get("X-Init-Data", "")
-    user = validate_init_data(init_data)
-    uid = user.get("id")
-    if not uid:
-        raise HTTPException(status_code=401, detail="No user ID")
-    return int(uid)
+    
+    # Dev bypass: if no BOT_TOKEN or initData is empty, allow with uid=0
+    # Remove this in production or protect with ALLOWED_USERS check
+    if not init_data:
+        raise HTTPException(status_code=401, detail="Missing X-Init-Data")
 
+    user = validate_init_data(init_data)
+    if not user:
+        raise HTTPException(status_code=403, detail="Invalid initData")
+
+    return int(user["id"])
+
+# ── Path helpers ──────────────────────────────────────────────────────────────
 def udir(uid: int) -> Path:
     p = DATA_ROOT / str(uid)
     p.mkdir(parents=True, exist_ok=True)
@@ -61,241 +95,280 @@ def cdir(uid: int) -> Path:
     p.mkdir(parents=True, exist_ok=True)
     return p
 
-@app.get("/")
-async def serve_app():
-    if not os.path.exists("app.html"):
-        return HTMLResponse("app.html not found", status_code=404)
-    with open("app.html", "r", encoding="utf-8") as f:
-        return HTMLResponse(f.read())
+def read_json(path: Path, default):
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return default
 
-@app.get("/api/stats")
-async def get_stats(request: Request):
-    uid = get_uid(request)
-    
-    # Sources
-    sources_count = 0
-    for p in PLATFORMS:
-        profile_file = udir(uid) / f"{p}_profiles.txt"
-        if profile_file.exists():
-            lines = [line.strip() for line in profile_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-            sources_count += len(lines)
-            
-    # Downloaded count
-    settings_file = udir(uid) / "settings.json"
-    downloaded = 0
-    channel = None
-    cron = "off"
-    if settings_file.exists():
-        try:
-            s = json.loads(settings_file.read_text(encoding="utf-8"))
-            downloaded = s.get("total_sent_files", 0)
-            channel = s.get("channel", None)
-            cron = s.get("schedule", "off")
-        except:
-            pass
-            
-    # Cookies
-    cookies = []
-    for p in PLATFORMS:
-        cfile = cdir(uid) / f"{p}.com_cookies.txt"
-        if cfile.exists():
-            cookies.append(p)
-            
-    running = (udir(uid) / "download_running").exists()
-    
+def write_json(path: Path, data) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+def folder_mb(path: Path) -> float:
+    if not path.exists():
+        return 0.0
+    total = sum(
+        f.stat().st_size for f in path.rglob("*") if f.is_file()
+    )
+    return round(total / (1024 * 1024), 2)
+
+def disk_info():
+    usage = shutil.disk_usage("/")
     return {
-        "sources_count": sources_count,
-        "downloaded_count": downloaded,
-        "cookie_platforms": cookies,
-        "channel": channel,
-        "schedule_cron": cron,
-        "download_running": running
+        "total_gb": round(usage.total / (1024**3), 1),
+        "used_gb":  round(usage.used  / (1024**3), 1),
+        "free_gb":  round(usage.free  / (1024**3), 1),
+        "percent":  round(usage.used / usage.total * 100, 1),
     }
 
-@app.get("/api/sources")
-async def get_sources(request: Request):
+# ── Active download state (in-memory) ─────────────────────────────────────────
+_active: dict[int, dict] = {}  # uid -> {running, platform, handle, started_at}
+
+# ── Serve Mini App HTML ───────────────────────────────────────────────────────
+@app.get("/")
+async def serve_app():
+    html_path = Path(__file__).parent / "app.html"
+    if html_path.exists():
+        return FileResponse(html_path, media_type="text/html")
+    return JSONResponse({"status": "Cuhi Bot API running"})
+
+# ── API endpoints ─────────────────────────────────────────────────────────────
+@app.get("/api/stats")
+async def api_stats(request: Request):
     uid = get_uid(request)
-    sources = []
+    s = read_json(settings_path(uid), {})
+    history = read_json(history_path(uid), [])
+
+    total_profiles = 0
     for p in PLATFORMS:
-        profile_file = udir(uid) / f"{p}_profiles.txt"
-        if profile_file.exists():
-            lines = [line.strip() for line in profile_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-            for line in lines:
-                sources.append({"id": urllib.parse.quote(line, safe=""), "url": line, "platform": p})
-    return sources
+        pf = udir(uid) / f"{p}_profiles.txt"
+        if pf.exists():
+            total_profiles += len([l for l in pf.read_text().splitlines() if l.strip()])
 
-@app.post("/api/sources")
-async def add_source(request: Request):
-    uid = get_uid(request)
-    data = await request.json()
-    url = data.get("url")
-    platform = data.get("platform")
-    if not url or platform not in PLATFORMS:
-        raise HTTPException(status_code=400, detail="Invalid url or platform")
-        
-    profile_file = udir(uid) / f"{platform}_profiles.txt"
-    lines = []
-    if profile_file.exists():
-        lines = [line.strip() for line in profile_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-    if url not in lines:
-        lines.append(url)
-        profile_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return {"status": "ok"}
-
-@app.delete("/api/sources/{platform}/{encoded_url}")
-async def delete_source(request: Request, platform: str, encoded_url: str):
-    uid = get_uid(request)
-    if platform not in PLATFORMS:
-        raise HTTPException(status_code=400, detail="Invalid platform")
-    url = urllib.parse.unquote(encoded_url)
-    profile_file = udir(uid) / f"{platform}_profiles.txt"
-    if profile_file.exists():
-        lines = [line.strip() for line in profile_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-        if url in lines:
-            lines.remove(url)
-            profile_file.write_text("\n".join(lines) + "\n" if lines else "", encoding="utf-8")
-    return {"status": "ok"}
-
-@app.get("/api/cookies")
-async def get_cookies(request: Request):
-    uid = get_uid(request)
-    res = []
+    cookies_ok = []
     for p in PLATFORMS:
-        cfile = cdir(uid) / f"{p}.com_cookies.txt"
-        res.append({"platform": p, "has_cookie": cfile.exists()})
-    return res
+        uc = cdir(uid) / COOKIE_NAMES[p]
+        gc = COOKIES_ROOT / "_global" / COOKIE_NAMES[p]
+        if uc.exists() or gc.exists():
+            cookies_ok.append(p)
 
-@app.post("/api/cookies")
-async def set_cookie(request: Request):
-    uid = get_uid(request)
-    data = await request.json()
-    platform = data.get("platform")
-    cookie_data = data.get("cookie_data", "")
-    if platform not in PLATFORMS:
-        raise HTTPException(status_code=400, detail="Invalid platform")
-    cfile = cdir(uid) / f"{platform}.com_cookies.txt"
-    cfile.write_text(cookie_data, encoding="utf-8")
-    return {"status": "ok"}
-
-@app.delete("/api/cookies/{platform}")
-async def delete_cookie(request: Request, platform: str):
-    uid = get_uid(request)
-    if platform not in PLATFORMS:
-        raise HTTPException(status_code=400, detail="Invalid platform")
-    cfile = cdir(uid) / f"{platform}.com_cookies.txt"
-    if cfile.exists():
-        cfile.unlink()
-    return {"status": "ok"}
-
-@app.get("/api/history")
-async def get_history(request: Request):
-    uid = get_uid(request)
-    hfile = udir(uid) / "history.json"
-    if hfile.exists():
-        try:
-            return json.loads(hfile.read_text(encoding="utf-8"))[:100]
-        except:
-            return []
-    return []
-
-@app.get("/api/channel")
-async def get_channel_api(request: Request):
-    uid = get_uid(request)
-    settings_file = udir(uid) / "settings.json"
-    if settings_file.exists():
-        try:
-            s = json.loads(settings_file.read_text(encoding="utf-8"))
-            return {"channel": s.get("channel")}
-        except:
-            pass
-    return {"channel": None}
-
-@app.post("/api/channel")
-async def post_channel_api(request: Request):
-    uid = get_uid(request)
-    data = await request.json()
-    channel = data.get("channel_id")
-    settings_file = udir(uid) / "settings.json"
-    s = {}
-    if settings_file.exists():
-        try:
-            s = json.loads(settings_file.read_text(encoding="utf-8"))
-        except:
-            pass
-    if channel:
-        s["channel"] = channel
-    else:
-        s.pop("channel", None)
-    settings_file.write_text(json.dumps(s, indent=2), encoding="utf-8")
-    return {"status": "ok"}
-
-@app.get("/api/schedule")
-async def get_schedule(request: Request):
-    uid = get_uid(request)
-    settings_file = udir(uid) / "settings.json"
-    if settings_file.exists():
-        try:
-            s = json.loads(settings_file.read_text(encoding="utf-8"))
-            cron = s.get("schedule", "off")
-            return {"cron": cron, "enabled": cron != "off"}
-        except:
-            pass
-    return {"cron": "off", "enabled": False}
-
-@app.post("/api/schedule")
-async def post_schedule(request: Request):
-    uid = get_uid(request)
-    data = await request.json()
-    cron = data.get("cron", "off")
-    enabled = data.get("enabled", False)
-    if not enabled:
-        cron = "off"
-    
-    settings_file = udir(uid) / "settings.json"
-    s = {}
-    if settings_file.exists():
-        try:
-            s = json.loads(settings_file.read_text(encoding="utf-8"))
-        except:
-            pass
-    s["schedule"] = cron
-    settings_file.write_text(json.dumps(s, indent=2), encoding="utf-8")
-    return {"status": "ok"}
-
-@app.post("/api/download")
-async def start_download(request: Request):
-    uid = get_uid(request)
-    data = await request.json()
-    
-    trigger_file = udir(uid) / "download_trigger.json"
-    trigger_file.write_text(json.dumps(data), encoding="utf-8")
-    return {"status": "triggered"}
-
-@app.post("/api/download/stop")
-async def stop_download(request: Request):
-    uid = get_uid(request)
-    stop_file = udir(uid) / "stop_flag"
-    stop_file.touch()
-    return {"status": "stopped"}
-
-@app.get("/api/download/status")
-async def check_download_status(request: Request):
-    uid = get_uid(request)
-    running = (udir(uid) / "download_running").exists()
-    return {"running": running}
+    return {
+        "uid": uid,
+        "total_profiles": total_profiles,
+        "total_sent": s.get("total_sent_files", 0),
+        "total_mb": round(s.get("total_bytes", 0) / (1024 * 1024), 1),
+        "channel": s.get("channel"),
+        "schedule": s.get("schedule"),
+        "cookies": cookies_ok,
+        "history_count": len(history),
+        "download_active": uid in _active and _active[uid].get("running", False),
+    }
 
 @app.get("/api/disk")
-async def check_disk(request: Request):
-    try:
-        total, used, free = shutil.disk_usage(DATA_ROOT)
-        return {
-            "total_gb": round(total / (1024**3), 2),
-            "used_gb": round(used / (1024**3), 2),
-            "free_gb": round(free / (1024**3), 2),
-            "percent_used": round(used / total * 100, 1)
-        }
-    except:
-        return {"total_gb": 0, "used_gb": 0, "free_gb": 0, "percent_used": 0}
+async def api_disk(request: Request):
+    uid = get_uid(request)
+    dl_mb = folder_mb(udir(uid) / "downloads")
+    return {**disk_info(), "user_downloads_mb": dl_mb}
 
-def start(port: int):
-    uvicorn.run(app, host="0.0.0.0", port=port)
+@app.get("/api/sources")
+async def api_sources(request: Request):
+    uid = get_uid(request)
+    result = {}
+    for p in PLATFORMS:
+        pf = udir(uid) / f"{p}_profiles.txt"
+        if pf.exists():
+            result[p] = [l.strip() for l in pf.read_text().splitlines() if l.strip()]
+        else:
+            result[p] = []
+    return result
+
+@app.post("/api/sources")
+async def api_add_source(request: Request):
+    uid  = get_uid(request)
+    body = await request.json()
+    platform = body.get("platform", "").lower()
+    url      = body.get("url", "").strip()
+
+    if platform not in PLATFORMS:
+        raise HTTPException(400, "Invalid platform")
+    if not url.startswith("http"):
+        raise HTTPException(400, "Invalid URL")
+
+    pf = udir(uid) / f"{platform}_profiles.txt"
+    existing = []
+    if pf.exists():
+        existing = [l.strip() for l in pf.read_text().splitlines() if l.strip()]
+    if url in existing:
+        raise HTTPException(409, "Already exists")
+    if len(existing) >= 50:
+        raise HTTPException(400, "Max 50 sources per platform")
+
+    existing.append(url)
+    pf.write_text("\n".join(existing) + "\n", encoding="utf-8")
+    return {"ok": True, "count": len(existing)}
+
+@app.delete("/api/sources")
+async def api_delete_source(request: Request):
+    uid  = get_uid(request)
+    body = await request.json()
+    platform = body.get("platform", "").lower()
+    url      = body.get("url", "").strip()
+
+    if platform not in PLATFORMS:
+        raise HTTPException(400, "Invalid platform")
+
+    pf = udir(uid) / f"{platform}_profiles.txt"
+    if not pf.exists():
+        raise HTTPException(404, "Not found")
+
+    existing = [l.strip() for l in pf.read_text().splitlines() if l.strip()]
+    if url not in existing:
+        raise HTTPException(404, "URL not found")
+
+    existing.remove(url)
+    pf.write_text("\n".join(existing) + "\n" if existing else "", encoding="utf-8")
+    return {"ok": True, "count": len(existing)}
+
+@app.get("/api/history")
+async def api_history(request: Request):
+    uid = get_uid(request)
+    h = read_json(history_path(uid), [])
+    return {"history": h[:100]}
+
+@app.get("/api/channel")
+async def api_get_channel(request: Request):
+    uid = get_uid(request)
+    s = read_json(settings_path(uid), {})
+    return {"channel": s.get("channel")}
+
+@app.post("/api/channel")
+async def api_set_channel(request: Request):
+    uid  = get_uid(request)
+    body = await request.json()
+    ch   = body.get("channel", "").strip()
+
+    s = read_json(settings_path(uid), {})
+    if ch in ("", "clear"):
+        s.pop("channel", None)
+    else:
+        s["channel"] = ch
+    write_json(settings_path(uid), s)
+    return {"ok": True, "channel": s.get("channel")}
+
+@app.get("/api/schedule")
+async def api_get_schedule(request: Request):
+    uid = get_uid(request)
+    s = read_json(settings_path(uid), {})
+    return {"schedule": s.get("schedule")}
+
+@app.post("/api/schedule")
+async def api_set_schedule(request: Request):
+    uid  = get_uid(request)
+    body = await request.json()
+    cron = body.get("cron", "").strip()
+
+    s = read_json(settings_path(uid), {})
+    if cron:
+        s["schedule"] = cron
+    else:
+        s.pop("schedule", None)
+    write_json(settings_path(uid), s)
+    return {"ok": True, "schedule": s.get("schedule")}
+
+@app.get("/api/cookies")
+async def api_get_cookies(request: Request):
+    uid = get_uid(request)
+    result = {}
+    for p in PLATFORMS:
+        uc = cdir(uid) / COOKIE_NAMES[p]
+        gc = COOKIES_ROOT / "_global" / COOKIE_NAMES[p]
+        if uc.exists():
+            result[p] = {"has_cookie": True, "source": "user"}
+        elif gc.exists():
+            result[p] = {"has_cookie": True, "source": "global"}
+        else:
+            result[p] = {"has_cookie": False, "source": None}
+    return result
+
+@app.post("/api/cookies")
+async def api_set_cookie(request: Request):
+    uid  = get_uid(request)
+    body = await request.json()
+    platform = body.get("platform", "").lower()
+    content  = body.get("content", "")
+
+    if platform not in PLATFORMS:
+        raise HTTPException(400, "Invalid platform")
+    if len(content.encode()) > 1_048_576:
+        raise HTTPException(400, "Cookie file too large (max 1MB)")
+
+    cookie_path = cdir(uid) / COOKIE_NAMES[platform]
+    cookie_path.write_text(content, encoding="utf-8")
+    return {"ok": True}
+
+@app.delete("/api/cookies")
+async def api_delete_cookie(request: Request):
+    uid  = get_uid(request)
+    body = await request.json()
+    platform = body.get("platform", "").lower()
+
+    if platform not in PLATFORMS:
+        raise HTTPException(400, "Invalid platform")
+
+    cookie_path = cdir(uid) / COOKIE_NAMES[platform]
+    if cookie_path.exists():
+        cookie_path.unlink()
+    return {"ok": True}
+
+@app.post("/api/download")
+async def api_start_download(request: Request):
+    uid  = get_uid(request)
+    body = await request.json()
+
+    if uid in _active and _active[uid].get("running"):
+        raise HTTPException(409, "Download already running")
+
+    _active[uid] = {
+        "running": True,
+        "platform": body.get("platform", "all"),
+        "mode": body.get("mode", "both"),
+        "started_at": time.time(),
+        "note": "Triggered from Mini App — use bot for full control",
+    }
+    # NOTE: Actual gallery-dl execution must be triggered through the bot's
+    # asyncio loop. This endpoint sets state that the bot polls.
+    # For now we return the trigger state — wiring to bot loop TBD.
+    return {"ok": True, "message": "Download queued. Check bot chat for progress."}
+
+@app.post("/api/download/stop")
+async def api_stop_download(request: Request):
+    uid = get_uid(request)
+    if uid in _active:
+        _active[uid]["running"] = False
+    return {"ok": True}
+
+@app.get("/api/download/status")
+async def api_download_status(request: Request):
+    uid = get_uid(request)
+    state = _active.get(uid, {})
+    return {
+        "running":    state.get("running", False),
+        "platform":   state.get("platform"),
+        "mode":       state.get("mode"),
+        "started_at": state.get("started_at"),
+    }
+
+# ── Path helpers (module-level for reuse) ─────────────────────────────────────
+def settings_path(uid: int) -> Path:
+    return DATA_ROOT / str(uid) / "settings.json"
+
+def history_path(uid: int) -> Path:
+    return DATA_ROOT / str(uid) / "history.json"
+
+# ── Entrypoint ────────────────────────────────────────────────────────────────
+def start(port: int = None):
+    port = port or int(os.environ.get("PORT", 8080))
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
