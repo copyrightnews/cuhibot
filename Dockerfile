@@ -18,7 +18,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Application code ────────────────────────────────────────────────────────────
-COPY bot.py .
+COPY bot.py server.py app.html .
 
 # ── Runtime ─────────────────────────────────────────────────────────────────────
 # DATA_ROOT and COOKIES_ROOT should be set via environment variables in Railway
