@@ -516,6 +516,42 @@ async def add_downloaded_bytes(uid: int, nbytes: int) -> None:
     )
 
 
+# ── Mini App / download_state.json IPC ───────────────────────────────────────
+
+def dl_state_path(uid: int) -> Path:
+    return DATA_ROOT / str(uid) / "download_state.json"
+
+def read_dl_state(uid: int) -> dict:
+    p = dl_state_path(uid)
+    if not p.exists():
+        return {"running": False, "queued": False, "stop_requested": False}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {"running": False, "queued": False, "stop_requested": False}
+
+def write_dl_state(uid: int, data: dict) -> None:
+    p = dl_state_path(uid)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(p)
+
+def clear_dl_state(uid: int) -> None:
+    """Call when a download finishes or is stopped."""
+    p = dl_state_path(uid)
+    if p.exists():
+        try:
+            s = json.loads(p.read_text(encoding="utf-8"))
+            s.update({"running": False, "queued": False,
+                      "stop_requested": False, "progress": "Idle"})
+            tmp = p.with_suffix(".tmp")
+            tmp.write_text(json.dumps(s, indent=2), encoding="utf-8")
+            tmp.replace(p)
+        except Exception:
+            pass
+
+
 # =============================================================================
 # 4. VALIDATORS & NORMALIZERS
 # =============================================================================
@@ -2012,6 +2048,172 @@ async def _restore_schedules(app: Application) -> None:
         except: pass
 
 
+async def _run_miniapp_download(
+    uid: int,
+    state: dict,
+    bot,
+) -> None:
+    """
+    Executes the download triggered by the Mini App.
+    Reads options from download_state.json, runs realtime_download per platform,
+    and writes progress back so the Mini App status poll stays accurate.
+    """
+    platform_filter = state.get("platform", "all")   # "all" | "instagram" | etc.
+    mode            = state.get("mode", "both")        # "both"|"photos"|"videos"
+    do_stories      = state.get("stories", False)
+    do_highlights   = state.get("highlights", False)
+    force           = state.get("force", False)
+
+    # Map Mini App "mode" string to bot's internal mode string
+    mode_map = {"both": "both", "photos": "photos", "videos": "videos",
+                "files": "documents"}
+    send_as = mode_map.get(mode, "both")
+
+    # Determine which platforms to run
+    platforms_to_run = (
+        list(PLATFORMS.keys())
+        if platform_filter == "all"
+        else [platform_filter]
+        if platform_filter in PLATFORMS
+        else list(PLATFORMS.keys())
+    )
+
+    # Create a stop event for this download
+    stop_event = asyncio.Event()
+    STOP_EVENTS[uid] = stop_event
+    ACTIVE_USERS.add(uid)
+
+    total_sent_count = 0
+
+    try:
+        for platform in platforms_to_run:
+            if stop_event.is_set():
+                break
+
+            profiles_file, cookie_name, sleep_sec = PLATFORMS[platform]
+            profiles = _read_profiles_sync(uid, platform)
+            if not profiles:
+                continue
+
+            cookie = resolve_cookie(uid, platform)
+
+            for url in profiles:
+                if stop_event.is_set():
+                    break
+
+                handle = handle_from_url(url)
+                run_modes = [send_as]
+                if do_stories:
+                    run_modes.append("stories")
+                if do_highlights:
+                    run_modes.append("highlights")
+
+                for run_mode in run_modes:
+                    if stop_event.is_set():
+                        break
+
+                    # Update progress in state file
+                    cur = read_dl_state(uid)
+                    cur["progress"] = f"Downloading {platform}/{handle} ({run_mode})…"
+                    cur["sent"] = total_sent_count
+                    write_dl_state(uid, cur)
+
+                    # Check stop_requested from Mini App Stop button
+                    if cur.get("stop_requested"):
+                        stop_event.set()
+                        break
+
+                    archive = archive_path(uid, platform, handle, run_mode)
+                    out_dir = udir(uid) / "downloads" / platform / handle / run_mode
+                    out_dir.mkdir(parents=True, exist_ok=True)
+
+                    # Use the chat or channel as target
+                    settings = _read_settings_sync(uid)
+                    channel = settings.get("channel")
+                    if channel:
+                        target = (bot, normalize_chat(channel))
+                    else:
+                        target = (bot, uid)  # DM to user
+
+                    sent = await realtime_download(
+                        target=target,
+                        uid=uid,
+                        platform=platform,
+                        handle=handle,
+                        mode=run_mode,
+                        url=url,
+                        cookie=cookie,
+                        sleep=sleep_sec,
+                        stop=stop_event,
+                        ignore_archive=force,
+                    )
+                    total_sent_count += sent
+
+        # Notify user in DM when done
+        try:
+            summary = f"✅ Mini App download complete — {total_sent_count} file(s) sent."
+            if stop_event.is_set():
+                summary = f"⏹ Mini App download stopped — {total_sent_count} file(s) sent."
+            await bot.send_message(chat_id=uid, text=summary)
+        except Exception:
+            pass
+
+    except Exception as exc:
+        logger.exception("_run_miniapp_download error for uid=%s", uid)
+        try:
+            await bot.send_message(
+                chat_id=uid,
+                text=f"❌ Mini App download error: {exc}"
+            )
+        except Exception:
+            pass
+    finally:
+        ACTIVE_USERS.discard(uid)
+        STOP_EVENTS.pop(uid, None)
+        clear_dl_state(uid)
+
+
+async def poll_miniapp_queue(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Runs every 5 seconds via JobQueue.
+    Checks all users' download_state.json for:
+      - queued=True  → trigger _run_miniapp_download
+      - stop_requested=True while running → set STOP_EVENTS[uid]
+    """
+    if not DATA_ROOT.exists():
+        return
+
+    for state_file in DATA_ROOT.glob("*/download_state.json"):
+        try:
+            uid = int(state_file.parent.name)
+        except ValueError:
+            continue
+
+        state = read_dl_state(uid)
+
+        # ── Handle stop request from Mini App ─────────────────────────────
+        if state.get("stop_requested") and state.get("running"):
+            if uid in STOP_EVENTS:
+                STOP_EVENTS[uid].set()
+            # clear_dl_state will be called by _run_miniapp_download's finally
+            continue
+
+        # ── Handle new queued download ─────────────────────────────────────
+        if state.get("queued") and not state.get("running") and uid not in ACTIVE_USERS:
+            # Transition: queued → running
+            state["queued"]      = False
+            state["running"]     = True
+            state["started_at"]  = time.time()
+            state["progress"]    = "Starting…"
+            write_dl_state(uid, state)
+
+            t = asyncio.ensure_future(
+                _run_miniapp_download(uid, state, context.bot)
+            )
+            _TASKS.add(t)
+            t.add_done_callback(_TASKS.discard)
+
+
 def main() -> None:
     if TOKEN == "YOUR_BOT_TOKEN": return
     bootstrap_env_cookies()
@@ -2048,8 +2250,10 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    
     start_mini_app_server()
+    app.job_queue.run_repeating(
+        poll_miniapp_queue, interval=5, first=3, name="miniapp_poll"
+    )
     app.run_polling(allowed_updates=["message", "callback_query"])
 
 
