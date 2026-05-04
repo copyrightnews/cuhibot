@@ -2174,42 +2174,24 @@ async def _run_miniapp_download(
 
 
 async def poll_miniapp_queue(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Runs every 5 seconds via JobQueue.
-    Checks all users' download_state.json for:
-      - queued=True  → trigger _run_miniapp_download
-      - stop_requested=True while running → set STOP_EVENTS[uid]
-    """
-    if not DATA_ROOT.exists():
-        return
-
-    for state_file in DATA_ROOT.glob("*/download_state.json"):
+    files = list(DATA_ROOT.glob("*/download_state.json"))
+    if files:
+        logger.info("poll found %d state file(s): %s", len(files), [str(f) for f in files])
+    for state_file in files:
         try:
             uid = int(state_file.parent.name)
         except ValueError:
             continue
-
         state = read_dl_state(uid)
-
-        # ── Handle stop request from Mini App ─────────────────────────────
+        logger.info("poll uid=%s state=%s", uid, state)
         if state.get("stop_requested") and state.get("running"):
             if uid in STOP_EVENTS:
                 STOP_EVENTS[uid].set()
-            # clear_dl_state will be called by _run_miniapp_download's finally
-            continue
-
-        # ── Handle new queued download ─────────────────────────────────────
-        if state.get("queued") and not state.get("running") and uid not in ACTIVE_USERS:
-            # Transition: queued → running
-            state["queued"]      = False
-            state["running"]     = True
-            state["started_at"]  = time.time()
-            state["progress"]    = "Starting…"
+        elif state.get("queued") and not state.get("running") and uid not in ACTIVE_USERS:
+            state.update({"queued": False, "running": True,
+                          "started_at": time.time(), "progress": "Starting…"})
             write_dl_state(uid, state)
-
-            t = asyncio.ensure_future(
-                _run_miniapp_download(uid, state, context.bot)
-            )
+            t = asyncio.ensure_future(_run_miniapp_download(uid, state, context.bot))
             _TASKS.add(t)
             t.add_done_callback(_TASKS.discard)
 
