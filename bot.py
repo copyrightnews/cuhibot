@@ -31,6 +31,7 @@ from telegram import (
     InputMediaVideo,
     Message,
     Update,
+    WebAppInfo,
 )
 
 import asyncio
@@ -62,6 +63,24 @@ logger = logging.getLogger(__name__)
 _IO_POOL = ThreadPoolExecutor(max_workers=4)
 
 TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
+
+import threading
+RAILWAY_DOMAIN = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+MINI_APP_URL = f"https://{RAILWAY_DOMAIN}" if RAILWAY_DOMAIN else ""
+
+def start_mini_app_server():
+    if not MINI_APP_URL:
+        logger.warning("RAILWAY_PUBLIC_DOMAIN not set — Mini App skipped")
+        return
+    try:
+        from server import start
+        port = int(os.environ.get("PORT", 8080))
+        t = threading.Thread(target=start, args=(port,), daemon=True)
+        t.start()
+        logger.info("Mini App server started → %s", MINI_APP_URL)
+    except Exception as e:
+        logger.error("Mini App server failed to start: %s", e)
+
 
 DATA_ROOT = Path(os.environ.get("DATA_ROOT", "./data"))
 COOKIES_ROOT = Path(os.environ.get("COOKIES_ROOT", "./cookies"))
@@ -573,7 +592,8 @@ def highlights_url_for(platform: str, url: str) -> str:
 # =============================================================================
 
 def kb_main() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
+    rows = [
+        [InlineKeyboardButton("🚀 Open Control Panel", web_app=WebAppInfo(url=MINI_APP_URL))] if MINI_APP_URL else [],
         [InlineKeyboardButton("➕ Add source", callback_data="m_add"),
          InlineKeyboardButton("🚫 Remove source", callback_data="m_remove")],
         [InlineKeyboardButton("🌐 My sources", callback_data="m_list"),
@@ -588,7 +608,9 @@ def kb_main() -> InlineKeyboardMarkup:
          InlineKeyboardButton("⏰ Schedule", callback_data="m_schedule")],
         [InlineKeyboardButton("📎 Export sources", callback_data="m_export"),
          InlineKeyboardButton("🗑️ Free disk", callback_data="m_cleanup")],
-    ])
+    ]
+    rows = [r for r in rows if r]
+    return InlineKeyboardMarkup(rows)
 
 
 def kb_back() -> InlineKeyboardMarkup:
@@ -2027,6 +2049,7 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
+    start_mini_app_server()
     app.run_polling(allowed_updates=["message", "callback_query"])
 
 
