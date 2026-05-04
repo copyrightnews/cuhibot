@@ -1,442 +1,676 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Cuhi Control Panel</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <style>
-        :root {
-            /* Dark theme fallbacks for browser testing */
-            --bg-color: var(--tg-theme-bg-color, #1e1e24);
-            --text-color: var(--tg-theme-text-color, #f5f5f5);
-            --hint-color: var(--tg-theme-hint-color, #a2a2a2);
-            --link-color: var(--tg-theme-link-color, #3390ec);
-            --btn-color: var(--tg-theme-button-color, #3390ec);
-            --btn-text-color: var(--tg-theme-button-text-color, #ffffff);
-            --secondary-bg: var(--tg-theme-secondary-bg-color, #2b2d35);
-            --danger-color: #ff3b30;
-        }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            margin: 0;
-            padding: 0;
-            padding-bottom: 70px;
-            box-sizing: border-box;
-        }
-        * { box-sizing: border-box; }
-        
-        .tabbar {
-            position: fixed;
-            bottom: 0; left: 0; right: 0;
-            height: 60px;
-            background-color: var(--secondary-bg);
-            display: flex;
-            justify-content: space-around;
-            align-items: center;
-            border-top: 1px solid var(--hint-color);
-            z-index: 1000;
-        }
-        .tab-btn {
-            background: none; border: none;
-            color: var(--hint-color);
-            font-size: 12px;
-            display: flex; flex-direction: column; align-items: center;
-            cursor: pointer; padding: 5px; width: 20%;
-        }
-        .tab-btn.active { color: var(--btn-color); font-weight: bold; }
-        .tab-icon { font-size: 20px; margin-bottom: 3px; }
-        
-        .page { display: none; padding: 15px; }
-        .page.active { display: block; }
-        
-        h2 { margin-top: 0; font-size: 20px; }
-        h3 { font-size: 16px; margin: 15px 0 10px; color: var(--hint-color); }
-        
-        .card {
-            background-color: var(--secondary-bg);
-            border-radius: 10px; padding: 15px; margin-bottom: 15px;
-        }
-        .stat-grid {
-            display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
-        }
-        .stat-box {
-            background-color: var(--bg-color);
-            padding: 15px; border-radius: 10px; text-align: center;
-            border: 1px solid var(--hint-color);
-        }
-        .stat-num { font-size: 24px; font-weight: bold; color: var(--btn-color); margin-bottom: 5px; }
-        .stat-label { font-size: 12px; color: var(--hint-color); }
-        
-        input, select {
-            width: 100%; padding: 10px;
-            border-radius: 8px; border: 1px solid var(--hint-color);
-            background-color: var(--bg-color); color: var(--text-color);
-            margin-bottom: 10px; font-size: 14px;
-        }
-        button {
-            width: 100%; padding: 12px;
-            border-radius: 8px; border: none;
-            background-color: var(--btn-color); color: var(--btn-text-color);
-            font-size: 16px; font-weight: bold; cursor: pointer;
-            margin-bottom: 10px;
-        }
-        button.danger { background-color: var(--danger-color); }
-        button.small { width: auto; padding: 6px 12px; font-size: 12px; margin: 0; }
-        
-        .list-item {
-            background-color: var(--secondary-bg);
-            padding: 10px; border-radius: 8px; margin-bottom: 10px;
-            display: flex; justify-content: space-between; align-items: center;
-            word-break: break-all;
-        }
-        
-        .toggle-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
-        .switch { position: relative; display: inline-block; width: 50px; height: 28px; }
-        .switch input { opacity: 0; width: 0; height: 0; }
-        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: var(--hint-color); transition: .4s; border-radius: 34px; }
-        .slider:before { position: absolute; content: ""; height: 20px; width: 20px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
-        input:checked + .slider { background-color: var(--btn-color); }
-        input:checked + .slider:before { transform: translateX(22px); }
-        
-        .progress-bar { width: 100%; height: 10px; background-color: var(--hint-color); border-radius: 5px; overflow: hidden; margin-top: 5px; }
-        .progress-fill { height: 100%; background-color: var(--btn-color); transition: width 0.3s; }
-        
-        #toast {
-            visibility: hidden; min-width: 250px; background-color: #333; color: #fff;
-            text-align: center; border-radius: 8px; padding: 12px;
-            position: fixed; z-index: 2000; left: 50%; bottom: 80px; transform: translateX(-50%);
-            font-size: 14px;
-        }
-        #toast.show { visibility: visible; animation: fadein 0.5s, fadeout 0.5s 2.5s; }
-        @keyframes fadein { from {bottom: 0; opacity: 0;} to {bottom: 80px; opacity: 1;} }
-        @keyframes fadeout { from {bottom: 80px; opacity: 1;} to {bottom: 0; opacity: 0;} }
-        
-        .banner { background-color: var(--btn-color); color: var(--btn-text-color); padding: 10px; border-radius: 8px; margin-bottom: 15px; text-align: center; display: none; font-weight: bold; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Cuhi Bot</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg:      var(--tg-theme-bg-color, #1a1a2e);
+    --bg2:     var(--tg-theme-secondary-bg-color, #16213e);
+    --text:    var(--tg-theme-text-color, #eaeaea);
+    --hint:    var(--tg-theme-hint-color, #8899aa);
+    --link:    var(--tg-theme-link-color, #4fc3f7);
+    --btn:     var(--tg-theme-button-color, #5c6bc0);
+    --btn-txt: var(--tg-theme-button-text-color, #ffffff);
+    --accent:  #7c83fd;
+    --danger:  #ef5350;
+    --success: #66bb6a;
+    --warn:    #ffa726;
+    --radius:  12px;
+    --nav-h:   60px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: var(--bg); color: var(--text); height: 100dvh;
+         display: flex; flex-direction: column; overflow: hidden; }
+
+  /* ── Nav ── */
+  #nav { position: fixed; bottom: 0; left: 0; right: 0; height: var(--nav-h);
+         background: var(--bg2); display: flex; border-top: 1px solid rgba(255,255,255,.07);
+         z-index: 100; }
+  .nav-btn { flex: 1; display: flex; flex-direction: column; align-items: center;
+             justify-content: center; gap: 3px; cursor: pointer; font-size: 10px;
+             color: var(--hint); transition: color .2s; border: none; background: none; }
+  .nav-btn.active { color: var(--accent); }
+  .nav-btn svg { width: 22px; height: 22px; }
+
+  /* ── Pages ── */
+  #pages { flex: 1; overflow: hidden; padding-bottom: var(--nav-h); }
+  .page  { display: none; height: 100%; overflow-y: auto; padding: 16px 14px 12px; }
+  .page.active { display: block; }
+
+  /* ── Cards ── */
+  .card { background: var(--bg2); border-radius: var(--radius); padding: 14px;
+          margin-bottom: 12px; }
+  .card-title { font-size: 11px; font-weight: 600; text-transform: uppercase;
+                letter-spacing: .8px; color: var(--hint); margin-bottom: 10px; }
+
+  /* ── Stat tiles ── */
+  .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+  .tile  { background: var(--bg2); border-radius: var(--radius); padding: 14px 12px;
+           display: flex; flex-direction: column; gap: 4px; }
+  .tile-val  { font-size: 22px; font-weight: 700; color: var(--accent); }
+  .tile-lbl  { font-size: 11px; color: var(--hint); }
+
+  /* ── Disk bar ── */
+  .disk-bar-wrap { background: rgba(255,255,255,.08); border-radius: 6px;
+                   height: 8px; overflow: hidden; margin: 8px 0; }
+  .disk-bar-fill { height: 100%; border-radius: 6px; background: var(--accent);
+                   transition: width .5s; }
+  .disk-bar-fill.warn  { background: var(--warn); }
+  .disk-bar-fill.crit  { background: var(--danger); }
+  .disk-lbl { font-size: 11px; color: var(--hint); display: flex;
+              justify-content: space-between; }
+
+  /* ── Running banner ── */
+  #dl-banner { display: none; background: linear-gradient(135deg,#1a237e,#283593);
+               border-radius: var(--radius); padding: 12px 14px; margin-bottom: 12px;
+               border: 1px solid rgba(124,131,253,.3); }
+  #dl-banner.show { display: flex; align-items: center; gap: 10px; }
+  .pulse { width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
+           animation: pulse 1.2s ease-in-out infinite; flex-shrink: 0; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.7)} }
+  #banner-txt { flex: 1; font-size: 13px; }
+  #stop-btn-banner { background: var(--danger); color: #fff; border: none;
+                     border-radius: 8px; padding: 6px 12px; font-size: 12px;
+                     font-weight: 600; cursor: pointer; flex-shrink: 0; }
+
+  /* ── Buttons ── */
+  .btn { display: flex; align-items: center; justify-content: center; gap: 8px;
+         width: 100%; padding: 13px; border-radius: var(--radius); border: none;
+         font-size: 14px; font-weight: 600; cursor: pointer; transition: opacity .15s; }
+  .btn:active { opacity: .75; }
+  .btn-primary   { background: var(--btn); color: var(--btn-txt); }
+  .btn-danger    { background: var(--danger); color: #fff; }
+  .btn-secondary { background: rgba(255,255,255,.08); color: var(--text); }
+  .btn + .btn    { margin-top: 8px; }
+  .btn-sm { padding: 7px 12px; font-size: 12px; border-radius: 8px; width: auto; }
+
+  /* ── Inputs ── */
+  input, select, textarea {
+    width: 100%; background: rgba(255,255,255,.07); color: var(--text);
+    border: 1px solid rgba(255,255,255,.12); border-radius: 8px;
+    padding: 11px 12px; font-size: 14px; outline: none; font-family: inherit;
+  }
+  input:focus, select:focus, textarea:focus {
+    border-color: var(--accent);
+  }
+  select option { background: #1a1a2e; }
+  textarea { resize: vertical; min-height: 90px; }
+  label { font-size: 12px; color: var(--hint); display: block; margin-bottom: 5px; }
+  .field { margin-bottom: 12px; }
+
+  /* ── Toggle ── */
+  .toggle-row { display: flex; align-items: center; justify-content: space-between;
+                padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.06); }
+  .toggle-row:last-child { border-bottom: none; }
+  .toggle-lbl { font-size: 13px; }
+  .toggle { position: relative; width: 42px; height: 24px; flex-shrink: 0; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-slider { position: absolute; inset: 0; background: rgba(255,255,255,.15);
+                   border-radius: 24px; cursor: pointer; transition: .25s; }
+  .toggle-slider:before { content: ''; position: absolute; width: 18px; height: 18px;
+                           left: 3px; top: 3px; background: #fff; border-radius: 50%;
+                           transition: .25s; }
+  .toggle input:checked + .toggle-slider { background: var(--accent); }
+  .toggle input:checked + .toggle-slider:before { transform: translateX(18px); }
+
+  /* ── Source list ── */
+  .src-item { display: flex; align-items: center; gap: 8px; padding: 9px 0;
+              border-bottom: 1px solid rgba(255,255,255,.06); }
+  .src-item:last-child { border-bottom: none; }
+  .src-url  { flex: 1; font-size: 12px; color: var(--hint); overflow: hidden;
+              text-overflow: ellipsis; white-space: nowrap; }
+  .src-del  { background: none; border: none; color: var(--danger); cursor: pointer;
+              font-size: 18px; padding: 0 4px; flex-shrink: 0; }
+  .plat-badge { font-size: 10px; background: rgba(124,131,253,.2); color: var(--accent);
+                border-radius: 4px; padding: 2px 6px; flex-shrink: 0; }
+
+  /* ── History ── */
+  .hist-item { padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,.06); }
+  .hist-item:last-child { border-bottom: none; }
+  .hist-url  { font-size: 12px; color: var(--link); overflow: hidden;
+               text-overflow: ellipsis; white-space: nowrap; }
+  .hist-meta { font-size: 11px; color: var(--hint); margin-top: 3px;
+               display: flex; gap: 10px; }
+
+  /* ── Cookie status ── */
+  .cookie-row { display: flex; align-items: center; gap: 8px; padding: 9px 0;
+                border-bottom: 1px solid rgba(255,255,255,.06); }
+  .cookie-row:last-child { border-bottom: none; }
+  .cookie-plat { font-size: 13px; flex: 1; }
+  .cookie-status { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
+  .cookie-status.ok  { background: rgba(102,187,106,.2); color: var(--success); }
+  .cookie-status.missing { background: rgba(239,83,80,.15); color: var(--danger); }
+
+  /* ── Section header ── */
+  .section-hdr { font-size: 13px; font-weight: 600; color: var(--text);
+                 margin: 16px 0 8px; display: flex; align-items: center; gap: 6px; }
+  .section-hdr:first-child { margin-top: 0; }
+
+  /* ── Toast ── */
+  #toast { position: fixed; bottom: calc(var(--nav-h) + 14px); left: 50%; transform: translateX(-50%);
+           background: rgba(30,30,50,.95); color: #fff; padding: 10px 18px;
+           border-radius: 20px; font-size: 13px; pointer-events: none;
+           opacity: 0; transition: opacity .25s; z-index: 999; white-space: nowrap;
+           backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,.1); }
+  #toast.show { opacity: 1; }
+
+  /* ── Loading ── */
+  .spinner { display: inline-block; width: 20px; height: 20px;
+             border: 2px solid rgba(255,255,255,.2); border-top-color: var(--accent);
+             border-radius: 50%; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Media picker ── */
+  .media-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .media-opt  { background: rgba(255,255,255,.06); border: 2px solid transparent;
+                border-radius: var(--radius); padding: 14px 8px;
+                text-align: center; cursor: pointer; transition: .2s; }
+  .media-opt.selected { border-color: var(--accent); background: rgba(124,131,253,.15); }
+  .media-opt-icon { font-size: 24px; }
+  .media-opt-lbl  { font-size: 12px; color: var(--hint); margin-top: 4px; }
+
+  /* ── Empty state ── */
+  .empty { text-align: center; padding: 40px 20px; color: var(--hint); font-size: 13px; }
+  .empty-icon { font-size: 36px; margin-bottom: 10px; }
+</style>
 </head>
 <body>
-    <div id="dl-banner" class="banner">🚀 Download in progress...</div>
 
-    <div id="tab-home" class="page active">
-        <h2>Dashboard</h2>
-        <div class="stat-grid">
-            <div class="stat-box">
-                <div class="stat-num" id="s-sources">0</div>
-                <div class="stat-label">Sources</div>
-            </div>
-            <div class="stat-box">
-                <div class="stat-num" id="s-files">0</div>
-                <div class="stat-label">Downloaded Files</div>
-            </div>
-            <div class="stat-box">
-                <div class="stat-num" id="s-cookies">-</div>
-                <div class="stat-label">Cookies Set</div>
-            </div>
-            <div class="stat-box">
-                <div class="stat-num" id="s-channel">None</div>
-                <div class="stat-label">Channel</div>
-            </div>
-        </div>
-        
-        <div class="card" style="margin-top: 15px;">
-            <h3>Disk Usage</h3>
-            <div style="display: flex; justify-content: space-between; font-size: 12px;">
-                <span id="disk-used">0 GB Used</span>
-                <span id="disk-free">0 GB Free</span>
-            </div>
-            <div class="progress-bar">
-                <div id="disk-fill" class="progress-fill" style="width: 0%"></div>
-            </div>
-        </div>
+<!-- Pages -->
+<div id="pages">
+
+  <!-- Home -->
+  <div class="page active" id="p-home">
+    <div id="dl-banner">
+      <div class="pulse"></div>
+      <div id="banner-txt">Download running…</div>
+      <button id="stop-btn-banner" onclick="stopDownload()">Stop</button>
     </div>
-
-    <div id="tab-sources" class="page">
-        <h2>Sources</h2>
-        <div class="card">
-            <select id="src-platform">
-                <option value="instagram">Instagram</option>
-                <option value="tiktok">TikTok</option>
-                <option value="facebook">Facebook</option>
-                <option value="x">X (Twitter)</option>
-            </select>
-            <input type="url" id="src-url" placeholder="https://...">
-            <button onclick="addSource()">Add Source</button>
-        </div>
-        <div id="sources-list"></div>
+    <div class="tiles">
+      <div class="tile"><div class="tile-val" id="stat-sources">—</div><div class="tile-lbl">Sources</div></div>
+      <div class="tile"><div class="tile-val" id="stat-sent">—</div><div class="tile-lbl">Files Sent</div></div>
+      <div class="tile"><div class="tile-val" id="stat-mb">—</div><div class="tile-lbl">Downloaded MB</div></div>
+      <div class="tile"><div class="tile-val" id="stat-hist">—</div><div class="tile-lbl">History</div></div>
     </div>
-
-    <div id="tab-download" class="page">
-        <h2>Manual Download</h2>
-        <div class="card">
-            <label>Media Type</label>
-            <select id="dl-media">
-                <option value="both">Both (Photos & Videos)</option>
-                <option value="photos">Photos Only</option>
-                <option value="videos">Videos Only</option>
-                <option value="documents">Files (as docs)</option>
-            </select>
-            
-            <button onclick="startDownload()">🚀 Start Download</button>
-            <button class="danger" onclick="stopDownload()">🛑 Stop Download</button>
-        </div>
+    <div class="card">
+      <div class="card-title">Disk Usage</div>
+      <div class="disk-bar-wrap"><div class="disk-bar-fill" id="disk-bar" style="width:0%"></div></div>
+      <div class="disk-lbl"><span id="disk-used">—</span><span id="disk-free">—</span></div>
     </div>
-
-    <div id="tab-history" class="page">
-        <h2>History</h2>
-        <div id="history-list"></div>
+    <div class="card">
+      <div class="card-title">Cookies Active</div>
+      <div id="cookie-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:2px;"></div>
     </div>
-
-    <div id="tab-settings" class="page">
-        <h2>Settings</h2>
-        
-        <div class="card">
-            <h3>Forwarding Channel</h3>
-            <input type="text" id="set-channel" placeholder="@channel or ID">
-            <button onclick="saveChannel()">Save Channel</button>
-        </div>
-        
-        <div class="card">
-            <h3>Auto Schedule</h3>
-            <div class="toggle-row">
-                <span>Enable Schedule</span>
-                <label class="switch"><input type="checkbox" id="sch-enable"><span class="slider"></span></label>
-            </div>
-            <select id="sch-cron">
-                <option value="6h">Every 6 Hours</option>
-                <option value="12h">Every 12 Hours</option>
-                <option value="24h">Every 24 Hours</option>
-            </select>
-            <button onclick="saveSchedule()">Save Schedule</button>
-        </div>
-        
-        <div class="card">
-            <h3>Cookies Manager</h3>
-            <select id="cookie-platform">
-                <option value="instagram">Instagram</option>
-                <option value="tiktok">TikTok</option>
-                <option value="facebook">Facebook</option>
-                <option value="x">X (Twitter)</option>
-            </select>
-            <textarea id="cookie-data" placeholder="Paste Netscape cookie format here..." rows="4" style="width:100%; border-radius:8px; padding:10px; background:var(--bg-color); color:var(--text-color); border:1px solid var(--hint-color); margin-bottom:10px; font-family:monospace;"></textarea>
-            <button onclick="saveCookie()">Save Cookie</button>
-            <button class="danger" onclick="deleteCookie()">Delete Cookie</button>
-            <div id="cookie-status" style="font-size: 12px; margin-top: 10px;"></div>
-        </div>
+    <div class="card">
+      <div class="card-title">Channel</div>
+      <div id="home-channel" style="font-size:13px;color:var(--hint);">Not set</div>
     </div>
+  </div>
 
-    <div class="tabbar">
-        <button class="tab-btn active" onclick="nav('home')"><div class="tab-icon">🏠</div>Home</button>
-        <button class="tab-btn" onclick="nav('sources')"><div class="tab-icon">📋</div>Sources</button>
-        <button class="tab-btn" onclick="nav('download')"><div class="tab-icon">🚀</div>Download</button>
-        <button class="tab-btn" onclick="nav('history')"><div class="tab-icon">📜</div>History</button>
-        <button class="tab-btn" onclick="nav('settings')"><div class="tab-icon">⚙️</div>Settings</button>
+  <!-- Sources -->
+  <div class="page" id="p-sources">
+    <div class="card">
+      <div class="card-title">Add Source</div>
+      <div class="field">
+        <label>Platform</label>
+        <select id="add-plat">
+          <option value="instagram">Instagram</option>
+          <option value="tiktok">TikTok</option>
+          <option value="facebook">Facebook</option>
+          <option value="x">X / Twitter</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Profile URL</label>
+        <input id="add-url" type="url" placeholder="https://www.instagram.com/username">
+      </div>
+      <button class="btn btn-primary" onclick="addSource()">➕ Add Source</button>
     </div>
+    <div id="sources-list"></div>
+  </div>
 
-    <div id="toast">Message</div>
+  <!-- Download -->
+  <div class="page" id="p-download">
+    <div class="card">
+      <div class="card-title">Media Type</div>
+      <div class="media-grid">
+        <div class="media-opt selected" data-mode="both" onclick="selectMode(this)">
+          <div class="media-opt-icon">🔖</div>
+          <div class="media-opt-lbl">Both</div>
+        </div>
+        <div class="media-opt" data-mode="photos" onclick="selectMode(this)">
+          <div class="media-opt-icon">🖼️</div>
+          <div class="media-opt-lbl">Photos</div>
+        </div>
+        <div class="media-opt" data-mode="videos" onclick="selectMode(this)">
+          <div class="media-opt-icon">🎬</div>
+          <div class="media-opt-lbl">Videos</div>
+        </div>
+        <div class="media-opt" data-mode="documents" onclick="selectMode(this)">
+          <div class="media-opt-icon">📁</div>
+          <div class="media-opt-lbl">As Files</div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Options</div>
+      <div class="toggle-row">
+        <span class="toggle-lbl">Include Stories</span>
+        <label class="toggle"><input type="checkbox" id="opt-stories"><span class="toggle-slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-lbl">Include Highlights</span>
+        <label class="toggle"><input type="checkbox" id="opt-highlights"><span class="toggle-slider"></span></label>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-lbl">Force Re-download</span>
+        <label class="toggle"><input type="checkbox" id="opt-force"><span class="toggle-slider"></span></label>
+      </div>
+    </div>
+    <div id="dl-status-card" class="card" style="display:none;">
+      <div class="card-title">Status</div>
+      <div id="dl-status-txt" style="font-size:13px;color:var(--hint);"></div>
+    </div>
+    <button class="btn btn-primary" id="start-dl-btn" onclick="startDownload()">▶️ Start Download</button>
+    <button class="btn btn-danger" id="stop-dl-btn" style="display:none;" onclick="stopDownload()">⏹ Stop Download</button>
+    <p style="font-size:11px;color:var(--hint);margin-top:10px;text-align:center;">
+      Download progress appears in your bot chat
+    </p>
+  </div>
 
-    <script>
-        const tg = window.Telegram.WebApp;
-        tg.expand();
-        tg.ready();
+  <!-- History -->
+  <div class="page" id="p-history">
+    <div id="history-list"><div class="empty"><div class="empty-icon">📭</div>No history yet</div></div>
+  </div>
 
-        const API_HEADERS = {
-            'Content-Type': 'application/json',
-            'X-Init-Data': tg.initData || ''
-        };
+  <!-- Settings -->
+  <div class="page" id="p-settings">
+    <div class="card">
+      <div class="card-title">Output Channel</div>
+      <div class="field">
+        <label>Channel ID or @username</label>
+        <input id="ch-input" type="text" placeholder="@mychannel or -100123456789">
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-primary" style="flex:1;" onclick="saveChannel()">Save</button>
+        <button class="btn btn-secondary" style="flex:1;" onclick="clearChannel()">Clear</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Schedule (Cron)</div>
+      <div class="field">
+        <label>Cron expression (leave blank to disable)</label>
+        <input id="cron-input" type="text" placeholder="0 */6 * * *  (every 6h)">
+      </div>
+      <button class="btn btn-primary" onclick="saveSchedule()">Save Schedule</button>
+    </div>
+    <div class="card">
+      <div class="card-title">Cookies</div>
+      <div id="cookie-list"></div>
+      <div class="field" style="margin-top:12px;">
+        <label>Platform</label>
+        <select id="ck-plat">
+          <option value="instagram">Instagram</option>
+          <option value="tiktok">TikTok</option>
+          <option value="facebook">Facebook</option>
+          <option value="x">X / Twitter</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Cookie file content (Netscape format)</label>
+        <textarea id="ck-content" placeholder="# Netscape HTTP Cookie File&#10;.instagram.com	TRUE	/	FALSE	0	sessionid	..."></textarea>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-primary" style="flex:1;" onclick="saveCookie()">Upload</button>
+        <button class="btn btn-danger" style="flex:1;" onclick="deleteCookie()">Delete</button>
+      </div>
+    </div>
+  </div>
 
-        function showToast(msg) {
-            const toast = document.getElementById("toast");
-            toast.innerText = msg;
-            toast.className = "show";
-            setTimeout(() => { toast.className = toast.className.replace("show", ""); }, 3000);
-        }
+</div><!-- /pages -->
 
-        function nav(tab) {
-            document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
-            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-            document.getElementById('tab-' + tab).classList.add('active');
-            event.currentTarget.classList.add('active');
-            if(tab === 'home') loadStats();
-            if(tab === 'sources') loadSources();
-            if(tab === 'history') loadHistory();
-            if(tab === 'settings') loadSettings();
-        }
+<!-- Bottom Nav -->
+<nav id="nav">
+  <button class="nav-btn active" data-page="home" onclick="switchPage('home',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+    Home
+  </button>
+  <button class="nav-btn" data-page="sources" onclick="switchPage('sources',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+    Sources
+  </button>
+  <button class="nav-btn" data-page="download" onclick="switchPage('download',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0018 9h-1.26A8 8 0 103 16.29"/></svg>
+    Download
+  </button>
+  <button class="nav-btn" data-page="history" onclick="switchPage('history',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="12 8 12 12 14 14"/><path d="M3.05 11a9 9 0 1 0 .5-4.5"/><polyline points="3 3 3 9 9 9"/></svg>
+    History
+  </button>
+  <button class="nav-btn" data-page="settings" onclick="switchPage('settings',this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+    Settings
+  </button>
+</nav>
 
-        async function apiCall(path, method="GET", body=null) {
-            try {
-                const opt = { method, headers: API_HEADERS };
-                if (body) opt.body = JSON.stringify(body);
-                const res = await fetch(path, opt);
-                if (!res.ok) throw new Error(await res.text());
-                return await res.json();
-            } catch (err) {
-                showToast("Error: " + err.message);
-                throw err;
-            }
-        }
+<div id="toast"></div>
 
-        async function loadStats() {
-            try {
-                const s = await apiCall('/api/stats');
-                document.getElementById('s-sources').innerText = s.total_profiles;
-                document.getElementById('s-files').innerText = s.total_sent;
-                document.getElementById('s-cookies').innerText = s.cookies.length ? s.cookies.join(", ") : "None";
-                document.getElementById('s-channel').innerText = s.channel || "None";
-                
-                document.getElementById('dl-banner').style.display = s.download_active ? 'block' : 'none';
-                
-                const d = await apiCall('/api/disk');
-                document.getElementById('disk-used').innerText = `${d.used_gb} GB Used`;
-                document.getElementById('disk-free').innerText = `${d.free_gb} GB Free`;
-                document.getElementById('disk-fill').style.width = `${d.percent}%`;
-            } catch(e){}
-        }
+<script>
+const tg = window.Telegram?.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
 
-        async function loadSources() {
-            try {
-                const groups = await apiCall('/api/sources');
-                let html = '';
-                
-                for(let p in groups) {
-                    if(groups[p] && groups[p].length > 0) {
-                        html += `<h3>${p.toUpperCase()}</h3>`;
-                        groups[p].forEach(url => {
-                            html += `
-                            <div class="list-item">
-                                <span style="font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-right:10px;">${url}</span>
-                                <button class="danger small" onclick="delSource('${p}', '${url}')">Del</button>
-                            </div>`;
-                        });
-                    }
-                }
-                document.getElementById('sources-list').innerHTML = html || '<p>No sources found.</p>';
-            } catch(e){}
-        }
+const API = '';  // same-origin
+const HEADERS = () => ({
+  'Content-Type': 'application/json',
+  'X-Init-Data': tg?.initData || '',
+});
 
-        async function addSource() {
-            const platform = document.getElementById('src-platform').value;
-            const url = document.getElementById('src-url').value;
-            if(!url) return;
-            await apiCall('/api/sources', 'POST', {platform, url});
-            document.getElementById('src-url').value = '';
-            showToast("Source added!");
-            loadSources();
-        }
+// ── State ──────────────────────────────────────────────────────────────────
+let selectedMode = 'both';
+let pollTimer = null;
 
-        async function delSource(platform, url) {
-            if(confirm("Delete this source?")) {
-                await apiCall('/api/sources', 'DELETE', {platform, url});
-                showToast("Source deleted!");
-                loadSources();
-            }
-        }
+// ── Navigation ─────────────────────────────────────────────────────────────
+function switchPage(name, btn) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('p-' + name).classList.add('active');
+  btn.classList.add('active');
+  if (name === 'home')     loadHome();
+  if (name === 'sources')  loadSources();
+  if (name === 'history')  loadHistory();
+  if (name === 'settings') loadSettings();
+}
 
-        async function loadHistory() {
-            try {
-                const data = await apiCall('/api/history');
-                const hist = data.history || [];
-                let html = '';
-                hist.forEach(h => {
-                    html += `
-                    <div class="list-item" style="flex-direction:column; align-items:flex-start; font-size:12px;">
-                        <div style="color:var(--btn-color); font-weight:bold; margin-bottom:5px;">${h.url || h.title || 'Unknown'}</div>
-                        <div>Status: ${h.status || 'unknown'} | Media: ${h.sent || 0}</div>
-                    </div>`;
-                });
-                document.getElementById('history-list').innerHTML = html || '<p>No history yet.</p>';
-            } catch(e){}
-        }
+// ── Toast ──────────────────────────────────────────────────────────────────
+function toast(msg, duration=2400) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), duration);
+}
 
-        async function loadSettings() {
-            try {
-                const c = await apiCall('/api/channel');
-                document.getElementById('set-channel').value = c.channel || '';
-                
-                const s = await apiCall('/api/schedule');
-                const scheduleStr = s.schedule || 'off';
-                document.getElementById('sch-enable').checked = scheduleStr !== 'off';
-                if(scheduleStr !== 'off') {
-                    document.getElementById('sch-cron').value = scheduleStr;
-                }
-                
-                updateCookieStatus();
-            } catch(e){}
-        }
+// ── API helpers ────────────────────────────────────────────────────────────
+async function api(method, path, body) {
+  try {
+    const opts = { method, headers: HEADERS() };
+    if (body) opts.body = JSON.stringify(body);
+    const r = await fetch(API + path, opts);
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      throw new Error(e.detail || r.statusText);
+    }
+    return await r.json();
+  } catch(e) {
+    toast('❌ ' + e.message);
+    throw e;
+  }
+}
 
-        async function saveChannel() {
-            const val = document.getElementById('set-channel').value;
-            await apiCall('/api/channel', 'POST', {channel: val});
-            showToast("Channel saved!");
-        }
+// ── Home ───────────────────────────────────────────────────────────────────
+async function loadHome() {
+  try {
+    const [stats, disk] = await Promise.all([
+      api('GET', '/api/stats'),
+      api('GET', '/api/disk'),
+    ]);
+    document.getElementById('stat-sources').textContent = stats.total_profiles;
+    document.getElementById('stat-sent').textContent    = stats.total_sent;
+    document.getElementById('stat-mb').textContent      = stats.total_mb;
+    document.getElementById('stat-hist').textContent    = stats.history_count;
 
-        async function saveSchedule() {
-            const enabled = document.getElementById('sch-enable').checked;
-            const cron = document.getElementById('sch-cron').value;
-            const finalSchedule = enabled ? cron : 'off';
-            await apiCall('/api/schedule', 'POST', {cron: finalSchedule});
-            showToast("Schedule saved!");
-        }
+    const pct = disk.percent;
+    const bar = document.getElementById('disk-bar');
+    bar.style.width = pct + '%';
+    bar.className = 'disk-bar-fill' + (pct > 85 ? ' crit' : pct > 65 ? ' warn' : '');
+    document.getElementById('disk-used').textContent = disk.used_gb + ' GB used';
+    document.getElementById('disk-free').textContent = disk.free_gb + ' GB free';
 
-        async function updateCookieStatus() {
-            try {
-                const cookiesObj = await apiCall('/api/cookies');
-                let html = '<strong>Active Cookies:</strong> ';
-                let active = [];
-                for(let p in cookiesObj) {
-                    if(cookiesObj[p].has_cookie) active.push(p);
-                }
-                html += active.length ? active.join(", ") : "None";
-                document.getElementById('cookie-status').innerHTML = html;
-            } catch(e){}
-        }
+    const chips = document.getElementById('cookie-chips');
+    chips.innerHTML = stats.cookies.length
+      ? stats.cookies.map(c => `<span class="plat-badge">${c}</span>`).join('')
+      : '<span style="font-size:12px;color:var(--hint);">None configured</span>';
 
-        async function saveCookie() {
-            const platform = document.getElementById('cookie-platform').value;
-            const data = document.getElementById('cookie-data').value;
-            if(!data) { showToast("Cookie data empty!"); return; }
-            await apiCall('/api/cookies', 'POST', {platform, content: data});
-            document.getElementById('cookie-data').value = '';
-            showToast("Cookie saved!");
-            updateCookieStatus();
-        }
+    document.getElementById('home-channel').textContent =
+      stats.channel ? stats.channel : 'Not set — configure in Settings';
 
-        async function deleteCookie() {
-            const platform = document.getElementById('cookie-platform').value;
-            if(confirm("Delete cookie for " + platform + "?")) {
-                await apiCall('/api/cookies', 'DELETE', {platform});
-                showToast("Cookie deleted!");
-                updateCookieStatus();
-            }
-        }
+    updateBanner(stats.download_active, stats.platform);
+  } catch(e) { /* toast already shown */ }
+}
 
-        async function startDownload() {
-            const media = document.getElementById('dl-media').value;
-            const platform = "all";
-            
-            await apiCall('/api/download', 'POST', {
-                mode: media, platform
-            });
-            showToast("Download triggered!");
-            document.getElementById('dl-banner').style.display = 'block';
-        }
+function updateBanner(running, platform) {
+  const banner = document.getElementById('dl-banner');
+  if (running) {
+    banner.classList.add('show');
+    document.getElementById('banner-txt').textContent =
+      `Downloading${platform && platform !== 'all' ? ' ' + platform : ''}…`;
+  } else {
+    banner.classList.remove('show');
+  }
+}
 
-        async function stopDownload() {
-            await apiCall('/api/download/stop', 'POST');
-            showToast("Stop signal sent!");
-            document.getElementById('dl-banner').style.display = 'none';
-        }
+// ── Sources ────────────────────────────────────────────────────────────────
+async function loadSources() {
+  const el = document.getElementById('sources-list');
+  el.innerHTML = '<div class="empty"><div class="spinner"></div></div>';
+  try {
+    const data = await api('GET', '/api/sources');
+    let html = '';
+    for (const [plat, urls] of Object.entries(data)) {
+      if (!urls.length) continue;
+      html += `<div class="section-hdr">${platIcon(plat)} ${cap(plat)}</div>`;
+      html += '<div class="card" style="padding:6px 14px;">';
+      html += urls.map(u => `
+        <div class="src-item">
+          <span class="src-url" title="${esc(u)}">${esc(u)}</span>
+          <button class="src-del" onclick="deleteSource('${esc(plat)}','${esc(u)}')">✕</button>
+        </div>`).join('');
+      html += '</div>';
+    }
+    el.innerHTML = html || '<div class="empty"><div class="empty-icon">📭</div>No sources added yet</div>';
+  } catch(e) { el.innerHTML = '<div class="empty">Failed to load</div>'; }
+}
 
-        setInterval(async () => {
-            try {
-                const s = await apiCall('/api/download/status');
-                document.getElementById('dl-banner').style.display = s.running ? 'block' : 'none';
-            } catch(e){}
-        }, 3000);
+async function addSource() {
+  const plat = document.getElementById('add-plat').value;
+  const url  = document.getElementById('add-url').value.trim();
+  if (!url) { toast('Enter a URL'); return; }
+  try {
+    await api('POST', '/api/sources', { platform: plat, url });
+    document.getElementById('add-url').value = '';
+    toast('✅ Source added');
+    loadSources();
+  } catch(e) {}
+}
 
-        loadStats();
-    </script>
+async function deleteSource(plat, url) {
+  if (!confirm('Remove this source?')) return;
+  try {
+    await api('DELETE', '/api/sources', { platform: plat, url });
+    toast('🗑️ Removed');
+    loadSources();
+  } catch(e) {}
+}
+
+// ── Download ───────────────────────────────────────────────────────────────
+function selectMode(el) {
+  document.querySelectorAll('.media-opt').forEach(o => o.classList.remove('selected'));
+  el.classList.add('selected');
+  selectedMode = el.dataset.mode;
+}
+
+async function startDownload() {
+  try {
+    await api('POST', '/api/download', {
+      mode:       selectedMode,
+      stories:    document.getElementById('opt-stories').checked,
+      highlights: document.getElementById('opt-highlights').checked,
+      force:      document.getElementById('opt-force').checked,
+    });
+    toast('▶️ Download started — check bot chat');
+    document.getElementById('start-dl-btn').style.display = 'none';
+    document.getElementById('stop-dl-btn').style.display  = '';
+    showDlStatus('Queued — bot will begin shortly…');
+    startPoll();
+  } catch(e) {}
+}
+
+async function stopDownload() {
+  try {
+    await api('POST', '/api/download/stop');
+    toast('⏹ Stop signal sent');
+    stopPoll();
+    document.getElementById('start-dl-btn').style.display = '';
+    document.getElementById('stop-dl-btn').style.display  = 'none';
+    document.getElementById('dl-status-card').style.display = 'none';
+    updateBanner(false);
+  } catch(e) {}
+}
+
+function showDlStatus(txt) {
+  document.getElementById('dl-status-card').style.display = '';
+  document.getElementById('dl-status-txt').textContent = txt;
+}
+
+function startPoll() {
+  stopPoll();
+  pollTimer = setInterval(pollStatus, 3000);
+}
+function stopPoll() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+async function pollStatus() {
+  try {
+    const s = await api('GET', '/api/download/status');
+    updateBanner(s.running, s.platform);
+    if (s.running) {
+      const ago = s.started_at ? Math.round((Date.now()/1000) - s.started_at) : 0;
+      showDlStatus(`Running${s.platform ? ' · ' + s.platform : ''} · ${fmtSec(ago)}`);
+      document.getElementById('start-dl-btn').style.display = 'none';
+      document.getElementById('stop-dl-btn').style.display  = '';
+    } else {
+      stopPoll();
+      document.getElementById('start-dl-btn').style.display = '';
+      document.getElementById('stop-dl-btn').style.display  = 'none';
+      showDlStatus('Idle');
+    }
+  } catch(e) {}
+}
+
+// ── History ────────────────────────────────────────────────────────────────
+async function loadHistory() {
+  const el = document.getElementById('history-list');
+  el.innerHTML = '<div class="empty"><div class="spinner"></div></div>';
+  try {
+    const data = await api('GET', '/api/history');
+    if (!data.history.length) {
+      el.innerHTML = '<div class="empty"><div class="empty-icon">📭</div>No history yet</div>';
+      return;
+    }
+    el.innerHTML = '<div class="card" style="padding:6px 14px;">' +
+      data.history.map(h => `
+        <div class="hist-item">
+          <div class="hist-url">${esc(h.url || h.handle || '?')}</div>
+          <div class="hist-meta">
+            <span>${esc(h.platform || '')}</span>
+            <span>${h.sent || 0} files</span>
+            <span>${fmtDate(h.ts || h.time || '')}</span>
+          </div>
+        </div>`).join('') + '</div>';
+  } catch(e) { el.innerHTML = '<div class="empty">Failed to load</div>'; }
+}
+
+// ── Settings ───────────────────────────────────────────────────────────────
+async function loadSettings() {
+  try {
+    const [ch, sched, cookies] = await Promise.all([
+      api('GET', '/api/channel'),
+      api('GET', '/api/schedule'),
+      api('GET', '/api/cookies'),
+    ]);
+    document.getElementById('ch-input').value   = ch.channel   || '';
+    document.getElementById('cron-input').value = sched.schedule || '';
+    renderCookies(cookies);
+  } catch(e) {}
+}
+
+function renderCookies(cookies) {
+  const el = document.getElementById('cookie-list');
+  el.innerHTML = Object.entries(cookies).map(([plat, info]) => `
+    <div class="cookie-row">
+      <span class="cookie-plat">${platIcon(plat)} ${cap(plat)}</span>
+      <span class="cookie-status ${info.has_cookie ? 'ok' : 'missing'}">
+        ${info.has_cookie ? '✓ ' + info.source : '✗ missing'}
+      </span>
+    </div>`).join('');
+}
+
+async function saveChannel() {
+  const v = document.getElementById('ch-input').value.trim();
+  try {
+    await api('POST', '/api/channel', { channel: v });
+    toast('✅ Channel saved');
+  } catch(e) {}
+}
+
+async function clearChannel() {
+  document.getElementById('ch-input').value = '';
+  try {
+    await api('POST', '/api/channel', { channel: 'clear' });
+    toast('🗑️ Channel cleared');
+  } catch(e) {}
+}
+
+async function saveSchedule() {
+  const v = document.getElementById('cron-input').value.trim();
+  try {
+    await api('POST', '/api/schedule', { cron: v });
+    toast(v ? '✅ Schedule saved' : '🗑️ Schedule cleared');
+  } catch(e) {}
+}
+
+async function saveCookie() {
+  const plat    = document.getElementById('ck-plat').value;
+  const content = document.getElementById('ck-content').value.trim();
+  if (!content) { toast('Paste cookie content first'); return; }
+  try {
+    await api('POST', '/api/cookies', { platform: plat, content });
+    document.getElementById('ck-content').value = '';
+    toast('✅ Cookie uploaded');
+    const cookies = await api('GET', '/api/cookies');
+    renderCookies(cookies);
+  } catch(e) {}
+}
+
+async function deleteCookie() {
+  const plat = document.getElementById('ck-plat').value;
+  if (!confirm(`Delete ${plat} cookie?`)) return;
+  try {
+    await api('DELETE', '/api/cookies', { platform: plat });
+    toast('🗑️ Cookie deleted');
+    const cookies = await api('GET', '/api/cookies');
+    renderCookies(cookies);
+  } catch(e) {}
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function cap(s)  { return s.charAt(0).toUpperCase() + s.slice(1); }
+function esc(s)  { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function platIcon(p) { return {instagram:'📸',tiktok:'🎵',facebook:'👤',x:'🐦'}[p] || '🌐'; }
+function fmtSec(s) { if (s < 60) return s+'s'; if (s < 3600) return Math.floor(s/60)+'m'; return Math.floor(s/3600)+'h'; }
+function fmtDate(ts) {
+  if (!ts) return '';
+  try { return new Date(typeof ts === 'number' ? ts*1000 : ts).toLocaleDateString(); }
+  catch(e) { return String(ts).slice(0,10); }
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────
+loadHome();
+pollStatus();
+</script>
 </body>
 </html>
