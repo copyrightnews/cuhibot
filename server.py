@@ -73,10 +73,16 @@ def get_uid(request: Request) -> int:
     """Extract and validate uid from Telegram initData header."""
     init_data = request.headers.get("X-Init-Data", "")
     
-    # Dev bypass: if no BOT_TOKEN or initData is empty, allow with uid=0
-    # Remove this in production or protect with ALLOWED_USERS check
+    # ── Dev/browser bypass ───────────────────────────────────────────
+    # When opened directly in browser (not via Telegram), initData is empty.
+    # Use ADMIN_IDS first user as fallback UID for testing.
     if not init_data:
+        admin_raw = os.environ.get("ADMIN_IDS", "").strip()
+        admin_ids = [x.strip() for x in admin_raw.split(",") if x.strip().isdigit()]
+        if admin_ids:
+            return int(admin_ids[0])
         raise HTTPException(status_code=401, detail="Missing X-Init-Data")
+    # ─────────────────────────────────────────────────────────────────
 
     user = validate_init_data(init_data)
     if not user:

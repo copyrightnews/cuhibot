@@ -7,13 +7,14 @@
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         :root {
-            --bg-color: var(--tg-theme-bg-color, #ffffff);
-            --text-color: var(--tg-theme-text-color, #000000);
-            --hint-color: var(--tg-theme-hint-color, #999999);
-            --link-color: var(--tg-theme-link-color, #2481cc);
-            --btn-color: var(--tg-theme-button-color, #2481cc);
+            /* Dark theme fallbacks for browser testing */
+            --bg-color: var(--tg-theme-bg-color, #1e1e24);
+            --text-color: var(--tg-theme-text-color, #f5f5f5);
+            --hint-color: var(--tg-theme-hint-color, #a2a2a2);
+            --link-color: var(--tg-theme-link-color, #3390ec);
+            --btn-color: var(--tg-theme-button-color, #3390ec);
             --btn-text-color: var(--tg-theme-button-text-color, #ffffff);
-            --secondary-bg: var(--tg-theme-secondary-bg-color, #f0f0f0);
+            --secondary-bg: var(--tg-theme-secondary-bg-color, #2b2d35);
             --danger-color: #ff3b30;
         }
         body {
@@ -178,19 +179,6 @@
                 <option value="documents">Files (as docs)</option>
             </select>
             
-            <div class="toggle-row" style="margin-top: 15px;">
-                <span>Download Stories</span>
-                <label class="switch"><input type="checkbox" id="dl-stories"><span class="slider"></span></label>
-            </div>
-            <div class="toggle-row">
-                <span>Download Highlights</span>
-                <label class="switch"><input type="checkbox" id="dl-highlights"><span class="slider"></span></label>
-            </div>
-            <div class="toggle-row">
-                <span>Force Re-download</span>
-                <label class="switch"><input type="checkbox" id="dl-force"><span class="slider"></span></label>
-            </div>
-            
             <button onclick="startDownload()">🚀 Start Download</button>
             <button class="danger" onclick="stopDownload()">🛑 Stop Download</button>
         </div>
@@ -293,39 +281,36 @@
         async function loadStats() {
             try {
                 const s = await apiCall('/api/stats');
-                document.getElementById('s-sources').innerText = s.sources_count;
-                document.getElementById('s-files').innerText = s.downloaded_count;
-                document.getElementById('s-cookies').innerText = s.cookie_platforms.length ? s.cookie_platforms.join(", ") : "None";
+                document.getElementById('s-sources').innerText = s.total_profiles;
+                document.getElementById('s-files').innerText = s.total_sent;
+                document.getElementById('s-cookies').innerText = s.cookies.length ? s.cookies.join(", ") : "None";
                 document.getElementById('s-channel').innerText = s.channel || "None";
                 
-                document.getElementById('dl-banner').style.display = s.download_running ? 'block' : 'none';
+                document.getElementById('dl-banner').style.display = s.download_active ? 'block' : 'none';
                 
                 const d = await apiCall('/api/disk');
                 document.getElementById('disk-used').innerText = `${d.used_gb} GB Used`;
                 document.getElementById('disk-free').innerText = `${d.free_gb} GB Free`;
-                document.getElementById('disk-fill').style.width = `${d.percent_used}%`;
+                document.getElementById('disk-fill').style.width = `${d.percent}%`;
             } catch(e){}
         }
 
         async function loadSources() {
             try {
-                const src = await apiCall('/api/sources');
+                const groups = await apiCall('/api/sources');
                 let html = '';
-                const groups = {};
-                src.forEach(s => {
-                    if(!groups[s.platform]) groups[s.platform] = [];
-                    groups[s.platform].push(s);
-                });
                 
                 for(let p in groups) {
-                    html += `<h3>${p.toUpperCase()}</h3>`;
-                    groups[p].forEach(s => {
-                        html += `
-                        <div class="list-item">
-                            <span style="font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-right:10px;">${s.url}</span>
-                            <button class="danger small" onclick="delSource('${s.platform}', '${s.id}')">Del</button>
-                        </div>`;
-                    });
+                    if(groups[p] && groups[p].length > 0) {
+                        html += `<h3>${p.toUpperCase()}</h3>`;
+                        groups[p].forEach(url => {
+                            html += `
+                            <div class="list-item">
+                                <span style="font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-right:10px;">${url}</span>
+                                <button class="danger small" onclick="delSource('${p}', '${url}')">Del</button>
+                            </div>`;
+                        });
+                    }
                 }
                 document.getElementById('sources-list').innerHTML = html || '<p>No sources found.</p>';
             } catch(e){}
@@ -341,9 +326,9 @@
             loadSources();
         }
 
-        async function delSource(platform, id) {
+        async function delSource(platform, url) {
             if(confirm("Delete this source?")) {
-                await apiCall(`/api/sources/${platform}/${id}`, 'DELETE');
+                await apiCall('/api/sources', 'DELETE', {platform, url});
                 showToast("Source deleted!");
                 loadSources();
             }
@@ -351,13 +336,14 @@
 
         async function loadHistory() {
             try {
-                const hist = await apiCall('/api/history');
+                const data = await apiCall('/api/history');
+                const hist = data.history || [];
                 let html = '';
                 hist.forEach(h => {
                     html += `
                     <div class="list-item" style="flex-direction:column; align-items:flex-start; font-size:12px;">
-                        <div style="color:var(--btn-color); font-weight:bold; margin-bottom:5px;">${h.url}</div>
-                        <div>Status: ${h.status} | Media: ${h.sent || 0}</div>
+                        <div style="color:var(--btn-color); font-weight:bold; margin-bottom:5px;">${h.url || h.title || 'Unknown'}</div>
+                        <div>Status: ${h.status || 'unknown'} | Media: ${h.sent || 0}</div>
                     </div>`;
                 });
                 document.getElementById('history-list').innerHTML = html || '<p>No history yet.</p>';
@@ -370,8 +356,11 @@
                 document.getElementById('set-channel').value = c.channel || '';
                 
                 const s = await apiCall('/api/schedule');
-                document.getElementById('sch-enable').checked = s.enabled;
-                document.getElementById('sch-cron').value = s.cron !== 'off' ? s.cron : '24h';
+                const scheduleStr = s.schedule || 'off';
+                document.getElementById('sch-enable').checked = scheduleStr !== 'off';
+                if(scheduleStr !== 'off') {
+                    document.getElementById('sch-cron').value = scheduleStr;
+                }
                 
                 updateCookieStatus();
             } catch(e){}
@@ -379,22 +368,26 @@
 
         async function saveChannel() {
             const val = document.getElementById('set-channel').value;
-            await apiCall('/api/channel', 'POST', {channel_id: val});
+            await apiCall('/api/channel', 'POST', {channel: val});
             showToast("Channel saved!");
         }
 
         async function saveSchedule() {
             const enabled = document.getElementById('sch-enable').checked;
             const cron = document.getElementById('sch-cron').value;
-            await apiCall('/api/schedule', 'POST', {enabled, cron});
+            const finalSchedule = enabled ? cron : 'off';
+            await apiCall('/api/schedule', 'POST', {cron: finalSchedule});
             showToast("Schedule saved!");
         }
 
         async function updateCookieStatus() {
             try {
-                const cookies = await apiCall('/api/cookies');
+                const cookiesObj = await apiCall('/api/cookies');
                 let html = '<strong>Active Cookies:</strong> ';
-                let active = cookies.filter(c => c.has_cookie).map(c => c.platform);
+                let active = [];
+                for(let p in cookiesObj) {
+                    if(cookiesObj[p].has_cookie) active.push(p);
+                }
                 html += active.length ? active.join(", ") : "None";
                 document.getElementById('cookie-status').innerHTML = html;
             } catch(e){}
@@ -404,7 +397,7 @@
             const platform = document.getElementById('cookie-platform').value;
             const data = document.getElementById('cookie-data').value;
             if(!data) { showToast("Cookie data empty!"); return; }
-            await apiCall('/api/cookies', 'POST', {platform, cookie_data: data});
+            await apiCall('/api/cookies', 'POST', {platform, content: data});
             document.getElementById('cookie-data').value = '';
             showToast("Cookie saved!");
             updateCookieStatus();
@@ -413,7 +406,7 @@
         async function deleteCookie() {
             const platform = document.getElementById('cookie-platform').value;
             if(confirm("Delete cookie for " + platform + "?")) {
-                await apiCall(`/api/cookies/${platform}`, 'DELETE');
+                await apiCall('/api/cookies', 'DELETE', {platform});
                 showToast("Cookie deleted!");
                 updateCookieStatus();
             }
@@ -421,12 +414,10 @@
 
         async function startDownload() {
             const media = document.getElementById('dl-media').value;
-            const stories = document.getElementById('dl-stories').checked;
-            const highlights = document.getElementById('dl-highlights').checked;
-            const force = document.getElementById('dl-force').checked;
+            const platform = "all";
             
             await apiCall('/api/download', 'POST', {
-                media_type: media, stories, highlights, force
+                mode: media, platform
             });
             showToast("Download triggered!");
             document.getElementById('dl-banner').style.display = 'block';
