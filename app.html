@@ -528,10 +528,12 @@ function navTo(page) {
   
   // [SUPERPOWER] iOS Motion Transition
   oldPageEl.classList.add('exit');
+  newPageEl.classList.remove('exit');
+  newPageEl.classList.add('active');
+  
   setTimeout(() => {
     oldPageEl.classList.remove('active', 'exit');
-    newPageEl.classList.add('active');
-  }, 100);
+  }, 800);
 
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelector(`[data-tab="${page}"]`).classList.add('active');
