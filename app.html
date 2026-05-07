@@ -508,6 +508,7 @@ function showToast(msg) {
 }
 
 function navTo(page) {
+  activePage = page;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
@@ -713,6 +714,18 @@ async function uploadCookie() {
 async function deleteCookie() {
   const platform = document.getElementById('cookie-platform').value;
   try {
+    await callApi('DELETE', `/api/cookies/${platform}`);
+    showToast(`${platform} cookie deleted`);
+    loadSettings();
+    tg?.HapticFeedback?.notificationOccurred('warning');
+  } catch(e) { showToast(e.message); }
+}
+
+// Boot
+startHomePolling();
+</script>
+</body>
+</html>ry {
     await callApi('DELETE', `/api/cookies/${platform}`);
     showToast(`${platform} cookie deleted`);
     loadSettings();

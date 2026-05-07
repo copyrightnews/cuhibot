@@ -184,10 +184,9 @@ def locked_file(target: Path):
             if attempt == max_retries - 1:
                 raise TimeoutError(
                     f"Could not acquire lock on {target} after {max_retries} retries")
-            # We don't sleep here; we let the next loop handle it.
-            # In a real async lock we'd await, but for a sync context manager
-            # used by sync I/O in threads, this is the safest compromise.
-
+            # [FIXED] Sleep for a tiny amount to prevent high CPU usage (busy-waiting)
+            time.sleep(0.01)
+    
     if fd is None:
         raise TimeoutError(
             f"Could not acquire lock on {target} after {max_retries} retries")
