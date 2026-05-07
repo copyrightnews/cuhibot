@@ -2163,33 +2163,33 @@ async def _run_miniapp_download(
 
 
 async def miniapp_queue_worker(bot) -> None:
-    \"\"\"[SUPERPOWER] Instant worker for Mini App requests.\"\"\"
-    logger.info(\"Mini App Queue Worker active\")
+    """[SUPERPOWER] Instant worker for Mini App requests."""
+    logger.info("Mini App Queue Worker active")
     while True:
         try:
             item = await MINIAPP_QUEUE.get()
-            q_type = item.get(\"type\")
-            uid = item.get(\"uid\")
+            q_type = item.get("type")
+            uid = item.get("uid")
             
-            if q_type == \"stop\":
+            if q_type == "stop":
                 if uid in STOP_EVENTS:
                     STOP_EVENTS[uid].set()
-                    logger.info(\"Instant STOP for uid=%s\", uid)
+                    logger.info("Instant STOP for uid=%s", uid)
             
-            elif q_type == \"download\":
+            elif q_type == "download":
                 if uid in ACTIVE_USERS:
                     MINIAPP_QUEUE.task_done()
                     continue
                 
-                trigger_data = item.get(\"data\", {})
-                logger.info(\"Instant DOWNLOAD for uid=%s\", uid)
+                trigger_data = item.get("data", {})
+                logger.info("Instant DOWNLOAD for uid=%s", uid)
                 t = asyncio.ensure_future(_run_miniapp_download(uid, trigger_data, bot))
                 _TASKS.add(t)
                 t.add_done_callback(_TASKS.discard)
                 
             MINIAPP_QUEUE.task_done()
         except Exception as e:
-            logger.error(\"Queue worker error: %s\", e)
+            logger.error("Queue worker error: %s", e)
             await asyncio.sleep(1)
 
 def main() -> None:
@@ -2231,59 +2231,34 @@ def main() -> None:
     start_mini_app_server()
     
     if app.job_queue is not None:
+        # We still keep a slow disk poll as a fallback for Railway volume persistence sync
         app.job_queue.run_repeating(
-            poll_miniapp_queue, interval=5, first=3, name="miniapp_poll"
+            poll_miniapp_queue_fallback, interval=30, first=10, name="miniapp_fallback"
         )
-    else:
-        # Fallback: asyncio background loop (no job-queue needed)
-        async def _poll_loop():
-            while True:
-                await asyncio.sleep(5)
-                try:
-                    # 1. Handle stops
-                    for stop_file in DATA_ROOT.glob("*/stop_flag"):
-                        try:
-                            uid = int(stop_file.parent.name)
-                            if uid in STOP_EVENTS:
-                                STOP_EVENTS[uid].set()
-                            stop_file.unlink(missing_ok=True)
-                        except ValueError:
-                            continue
 
-                    # 2. Handle new triggers
-                    for trigger_file in DATA_ROOT.glob("*/download_trigger.json"):
-                        try:
-                            uid = int(trigger_file.parent.name)
-                            trigger_data = json.loads(trigger_file.read_text(encoding="utf-8"))
-                            trigger_file.unlink(missing_ok=True)
-                            if uid not in ACTIVE_USERS:
-                                t = asyncio.ensure_future(_run_miniapp_download(uid, trigger_data, app.bot))
-                                _TASKS.add(t)
-                                t.add_done_callback(_TASKS.discard)
-                        except Exception:
-                            continue
-                except Exception:
-                    pass
+    _original_post_init = app.post_init
 
-        # [FIXED] Chain both callbacks instead of overwriting post_init.
-        # Overwriting would have silently killed _restore_schedules on every restart.
-        _original_post_init = app.post_init
+    async def _chained_post_init(application):
+        if _original_post_init is not None:
+            await _original_post_init(application)
+        # Start the superpower queue worker
+        asyncio.create_task(miniapp_queue_worker(application.bot))
 
-        async def _chained_post_init(application):
-            if _original_post_init is not None:
-                await _original_post_init(application)
-            asyncio.ensure_future(_poll_loop())
-
-        app.post_init = _chained_post_init
-
+    app.post_init = _chained_post_init
     app.run_polling(allowed_updates=["message", "callback_query"])
 
 
-if __name__ == "__main__":
-    main()
-st_init = _chained_post_init
-
-    app.run_polling(allowed_updates=["message", "callback_query"])
+async def poll_miniapp_queue_fallback(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Fallback for Railway disk triggers if queue fails."""
+    if not DATA_ROOT.exists(): return
+    for trigger_file in DATA_ROOT.glob("*/download_trigger.json"):
+        try:
+            uid = int(trigger_file.parent.name)
+            trigger_data = json.loads(trigger_file.read_text(encoding="utf-8"))
+            trigger_file.unlink(missing_ok=True)
+            if uid not in ACTIVE_USERS:
+                await MINIAPP_QUEUE.put({"type": "download", "uid": uid, "data": trigger_data})
+        except: continue
 
 
 if __name__ == "__main__":
