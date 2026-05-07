@@ -1,46 +1,67 @@
-# 🛡️ Keeping Cuhi Bot Safe
+# 🛡️ Cuhi Bot Security Policy
 
-Security is a huge deal for us. Since this bot handles your social media cookies and private media, we've designed it to be as private as possible.
+Security is a paramount concern for the Cuhi Bot team. Since this bot is designed to handle user authentication cookies for social media platforms (Instagram, TikTok, Facebook, Twitter/X) and process private media files, it is engineered with strict privacy and security guardrails.
 
-## 🐛 If You Find a Bug
-If you discover a security hole or a vulnerability, **please don't post it publicly** on the GitHub issue tracker. 
-
-Instead, send us an email so we can fix it before it's exploited:
-📧 **mintdmca@gmail.com** (Copyright News - Official Support)
-
-We usually reply within **48 hours** and try to get a fix out in less than a week.
+This document outlines our security practices, how to report vulnerabilities, and best practices for securely running your own instance of Cuhi Bot.
 
 ---
 
-## 🛠️ Our Security Principles
-We built the bot on three main rules:
-1. **Least Privilege**: The bot only asks for what it absolutely needs to work.
-2. **Isolation**: Your data is yours. Every user has their own isolated folder—no one else can see your links or history.
-3. **Integrity**: We use file locking to make sure your data doesn't get corrupted if you're running multiple tasks at once.
+## 🚨 Reporting a Vulnerability
+
+**DO NOT report security vulnerabilities via public GitHub issues.**
+
+If you discover a security vulnerability in Cuhi Bot, please report it immediately via private email so that we can patch it before it is exploited in the wild.
+
+*   **Email:** `mintdmca@gmail.com`
+*   **Response Time:** We will acknowledge receipt of your vulnerability report within 48 hours.
+*   **Patch Timeline:** We strive to provide a patch or mitigation within 7 days of validating the report.
+
+Please include the following information in your report:
+*   Type of vulnerability (e.g., XSS, RCE, Path Traversal, Authentication Bypass)
+*   Steps to reproduce the vulnerability
+*   The potential impact of the vulnerability
+*   Your environment details (OS, Python version, Cuhi Bot version)
 
 ---
 
-## 📋 Security Quick-Look
+## 🔒 Security Principles
 
-| Feature | How it protects you |
-|---------|---------------------|
-| **Access Control** | You can lock the bot to your specific Telegram ID using `ALLOWED_USERS`. |
-| **Rate Limiting** | Prevents the bot from being spammed or your accounts from being flagged. |
-| **Validation** | We strictly check every URL to prevent "shell injection" or other sneaky attacks. |
-| **Upload Guard** | Automatically skips files over 50MB to avoid breaking the Telegram API. |
-| **Minimal Base** | Our Docker image is slim and doesn't include any unnecessary junk. |
+Cuhi Bot is built on the following core security principles:
 
----
-
-## 📅 Audit History
-We've done **17 rigorous audit passes** and fixed **78 bugs** to get the code where it is today. 
-
-*For the full technical breakdown, check out our [CHANGELOG.md](CHANGELOG.md).*
+1.  **Self-Hosted Privacy:** We do not collect telemetry, user data, or analytics. Your data, cookies, and downloaded media remain entirely on your own server.
+2.  **Least Privilege:** The application runs with the minimum permissions required. We strongly recommend running Cuhi Bot in a Docker container or a dedicated, restricted user account.
+3.  **Strict Isolation:** User data and history files are segregated. A user cannot access or trigger downloads using another user's cookie profile.
+4.  **Data Integrity:** We utilize OS-level file locking (`fcntl` on Unix, `msvcrt` on Windows) to prevent race conditions and file corruption when multiple users access the JSON data stores simultaneously.
+5.  **Input Sanitization:** All URLs passed to the bot via Telegram messages or the Mini App are strictly validated against allow-listed regex patterns before being passed to underlying download engines (`gallery-dl`, `yt-dlp`).
 
 ---
 
-### ⚠️ A Final Warning
-**Never share your `BOT_TOKEN` or your cookie files with anyone.** If someone gets a hold of them, they can access your Telegram bot and your social media accounts. If you think they've been leaked, rotate them immediately!
+## 🛡️ Access Control & Hardening
+
+When deploying Cuhi Bot, administrators are highly encouraged to utilize the built-in security features to harden their instance:
+
+### 1. User Allowlists
+Cuhi Bot is NOT a public bot by default. You should configure the `ALLOWED_USERS` environment variable with a comma-separated list of Telegram User IDs. If a user is not on this list, the bot will silently ignore all their messages and block their access to the Mini App dashboard.
+
+### 2. Admin System
+The `/admin` panel is restricted via the `ADMIN_IDS` environment variable. Only these users can globally restart the bot, view system metrics, or manage global configurations.
+
+### 3. Telegram WebApp Validation
+The Mini App backend (`server.py`) does not trust client-side data. All API requests from the Mini App must include the `initData` payload from Telegram. The server cryptographically verifies this payload against your `BOT_TOKEN` using HMAC-SHA256 to ensure the request genuinely originated from the authenticated Telegram user.
+
+### 4. Safe Payload Limits
+To protect the server from Out-Of-Memory (OOM) crashes and the Telegram API from rate limits, Cuhi Bot automatically skips individual files larger than 50MB and groups uploads into maximum batches of 10 items.
 
 ---
-<p align="center">Stay safe out there. ✌️</p>
+
+## ⚠️ Administrator Responsibilities
+
+While we secure the codebase, the security of the host environment is your responsibility:
+
+*   **Keep Secrets Secret:** Never commit your `BOT_TOKEN` or `cookies.txt` files to a public repository. If your token leaks, anyone can control your bot. Revoke it immediately via [@BotFather](https://t.me/BotFather) if compromised.
+*   **Secure Cookie Handling:** Social media cookies are equivalent to passwords. If a malicious actor gains access to your `cookies.txt`, they have full access to your social media accounts. Ensure the directory where cookies are stored (`/app/data/cookies`) has restrictive file permissions.
+*   **Burner Accounts:** We strongly advise using "burner" or secondary social media accounts to generate cookies for Cuhi Bot. Do not use your primary personal accounts, as automated scraping can sometimes trigger anti-bot measures resulting in account suspension.
+*   **Updates:** We regularly update Cuhi Bot to patch underlying dependencies (`gallery-dl`, `yt-dlp`, `python-telegram-bot`, `FastAPI`). Keep your instance up to date to ensure you are protected against upstream vulnerabilities.
+
+---
+*Stay safe and keep your archives secure.*
