@@ -29,7 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 # ── Config ────────────────────────────────────────────────────────────
-BOT_TOKEN    = os.environ["BOT_TOKEN"]
+BOT_TOKEN    = os.environ.get("BOT_TOKEN", "")
 DATA_ROOT    = Path(os.environ.get("DATA_ROOT",    "./data"))
 COOKIES_ROOT = Path(os.environ.get("COOKIES_ROOT", "./cookies"))
 APP_DIR      = Path(__file__).parent

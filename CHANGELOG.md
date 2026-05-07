@@ -4,6 +4,19 @@ This is the history of every major fix and feature added to **Cuhi Bot**. We try
 
 ---
 
+## [2.0.1] Deep Bug Scan Fixes — 2026-05-08
+
+### Critical & Moderate Bug Fixes
+- **Queue Runtime Crash**: Fixed `NameError` crash by properly defining `MINIAPP_QUEUE`.
+- **Initialization Fix**: Correctly passed post_init functions during the bot builder sequence to prevent read-only property assignment errors and ensure the queue worker starts.
+- **Escape Character Rendering**: Fixed Markdown formatting where literal backslashes appeared in the UI menu.
+- **Async Safety**: Replaced blocking I/O calls (`_read_profiles_sync`, `_read_settings_sync`) within the download routines with proper executor-backed awaitable counterparts.
+- **Exception Handling Safety**: Removed bare `except:` blocks that suppressed critical system signals (like KeyboardInterrupt) ensuring graceful shutdowns.
+- **Missing Feedback**: Added a proper error message when a user tries to export an empty list of sources.
+- **Server Safety**: Replaced unsafe `os.environ` index with a `.get()` fallback in `server.py` to prevent crashes when `BOT_TOKEN` is missing at load time.
+
+---
+
 ## [2.0.0] Stable Final Release — 2026-05-04
 
 ### Async Architecture & Stability Patch

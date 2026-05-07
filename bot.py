@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cuhi Bot v2.0.0 — production-hardened & async-optimized edition (Stable Release).
+Cuhi Bot v2.0.1 — production-hardened & async-optimized edition (Stable Release).
 
 Platforms   : Instagram, TikTok, Facebook, X (Twitter)
 Persistence : per-user JSON files with async-safe file locks
@@ -150,6 +150,7 @@ STOP_EVENTS: dict[int, asyncio.Event] = {}
 ACTIVE_USERS: set[int] = set()
 _LAST_DOWNLOAD: dict[int, float] = {}
 _TASKS: set[asyncio.Task] = set()   # prevent GC of fire-and-forget tasks
+MINIAPP_QUEUE: asyncio.Queue = asyncio.Queue()
 
 
 # =============================================================================
@@ -684,17 +685,17 @@ async def render_menu(uid: int, username: str, name: str) -> str:
     t_prof = await total_profiles(uid)
     
     return (
-        "Cuhi Bot \\- @copyrightnews\n"
+        "Cuhi Bot — @copyrightnews\n"
         "━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "A powerful, open\\-source media forwarder & downloader that automatically delivers content from social networks — including Instagram, TikTok, Facebook, and X (Twitter) — directly to your Telegram chats or channels.\n\n"
+        "A powerful, open-source media forwarder & downloader that automatically delivers content from social networks — including Instagram, TikTok, Facebook, and X (Twitter) — directly to your Telegram chats or channels.\n\n"
         "✨ Features:\n"
         "🔀 Private, channel & group forwarding modes\n"
         "🖼 Photos, videos & file delivery\n"
         "♻️ Instant social media profile downloads\n"
-        "🔄 Fast refresh & real\\-time content syncing\n"
+        "🔄 Fast refresh & real-time content syncing\n"
         "🎙 Live stream & premiere support\n"
         "♻️ Duplicate similarity filter\n"
-        "🔖 High\\-resolution stories & highlights download\n\n"
+        "🔖 High-resolution stories & highlights download\n\n"
         "❔ Getting Started\n"
         "━ Add a data source (Instagram, TikTok, etc.)\n"
         "━ Configure your output channel and cookies\n"
@@ -1680,7 +1681,7 @@ async def handle_callback(
         platform = parts[1]
         try:
             idx = int(parts[2])
-        except: return
+        except (ValueError, TypeError): return
         removed_container = []
         def _remove(current: list[str]) -> list[str]:
             if 0 <= idx < len(current): removed_container.append(current.pop(idx))
@@ -1797,6 +1798,7 @@ async def handle_callback(
                 lines.extend(urls)
                 lines.append("")
         if not lines:
+            await q.message.edit_text("🚫 No sources to export.", reply_markup=kb_back())
             return
         export_file = udir(uid) / "cuhibot_sources.txt"
         await asyncio.to_thread(export_file.write_text, "\n".join(lines), encoding="utf-8")
@@ -1907,9 +1909,9 @@ def bootstrap_env_cookies() -> None:
         try:
             decoded = base64.b64decode(value, validate=True).decode("utf-8")
             content = decoded if "\t" in decoded or decoded.lstrip().startswith("#") else value
-        except: content = value
+        except Exception: content = value
         try: dest.write_text(content, encoding="utf-8")
-        except: pass
+        except Exception: pass
 
 
 async def cmd_admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1920,7 +1922,7 @@ async def cmd_admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 def _detect_platform(url: str) -> str | None:
     try: domain = urlparse(url).netloc.lower()
-    except: return None
+    except Exception: return None
     for plat, domains in PLATFORM_DOMAINS.items():
         if any(domain == d or domain.endswith('.' + d) for d in domains): return plat
     return None
@@ -2032,7 +2034,7 @@ async def _scheduled_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 if ev.is_set(): break
                 total += await realtime_download(target=target, uid=uid, platform=p, handle=handle_from_url(url), mode="mixed", url=url, cookie=resolve_cookie(uid, p), sleep=sl, stop=ev, status=status)
         await status.set(f"⏰ *Scheduled download done!* {total} file(s).", force=True)
-    except: logger.exception("Job failed")
+    except Exception: logger.exception("Job failed")
     finally:
         _release(uid, ev)
         await asyncio.to_thread(wipe_downloads, uid)
@@ -2050,7 +2052,7 @@ async def _restore_schedules(app: Application) -> None:
             if interval_key == "off" or interval_key not in SCHEDULE_OPTIONS: continue
             interval = SCHEDULE_OPTIONS[interval_key]
             app.job_queue.run_repeating(_scheduled_job, interval=interval, first=interval, name=f"schedule_{uid}", data={"uid": uid, "chat_id": s.get("schedule_chat_id"), "uname": s.get("schedule_uname"), "name": s.get("schedule_name")})
-        except: pass
+        except Exception: pass
 
 
 async def _run_miniapp_download(
@@ -2089,7 +2091,7 @@ async def _run_miniapp_download(
                 break
 
             profiles_file, cookie_name, sleep_sec = PLATFORMS[platform]
-            profiles = _read_profiles_sync(uid, platform)
+            profiles = await read_profiles(uid, platform)
             if not profiles:
                 continue
 
@@ -2110,12 +2112,8 @@ async def _run_miniapp_download(
                     if stop_event.is_set():
                         break
 
-                    archive = archive_path(uid, platform, handle, run_mode)
-                    out_dir = udir(uid) / "downloads" / platform / handle / run_mode
-                    out_dir.mkdir(parents=True, exist_ok=True)
-
                     # Use the chat or channel as target
-                    settings = _read_settings_sync(uid)
+                    settings = await read_settings(uid)
                     channel = settings.get("channel")
                     if channel:
                         target = (bot, normalize_chat(channel))
@@ -2192,11 +2190,18 @@ async def miniapp_queue_worker(bot) -> None:
             logger.error("Queue worker error: %s", e)
             await asyncio.sleep(1)
 
+
+async def _combined_post_init(application: Application) -> None:
+    """Combined post_init: restore schedules + start queue worker."""
+    await _restore_schedules(application)
+    asyncio.create_task(miniapp_queue_worker(application.bot))
+
+
 def main() -> None:
     if TOKEN == "YOUR_BOT_TOKEN": return
     bootstrap_env_cookies()
     request = HTTPXRequest(connect_timeout=15.0, read_timeout=30.0, write_timeout=60.0, pool_timeout=60.0, connection_pool_size=200)
-    app = Application.builder().token(TOKEN).request(request).post_init(_restore_schedules).build()
+    app = Application.builder().token(TOKEN).request(request).post_init(_combined_post_init).build()
     
     # Navigation & Core
     app.add_handler(CommandHandler("start", cmd_start))
@@ -2236,15 +2241,6 @@ def main() -> None:
             poll_miniapp_queue_fallback, interval=30, first=10, name="miniapp_fallback"
         )
 
-    _original_post_init = app.post_init
-
-    async def _chained_post_init(application):
-        if _original_post_init is not None:
-            await _original_post_init(application)
-        # Start the superpower queue worker
-        asyncio.create_task(miniapp_queue_worker(application.bot))
-
-    app.post_init = _chained_post_init
     app.run_polling(allowed_updates=["message", "callback_query"])
 
 
@@ -2258,7 +2254,7 @@ async def poll_miniapp_queue_fallback(context: ContextTypes.DEFAULT_TYPE) -> Non
             trigger_file.unlink(missing_ok=True)
             if uid not in ACTIVE_USERS:
                 await MINIAPP_QUEUE.put({"type": "download", "uid": uid, "data": trigger_data})
-        except: continue
+        except Exception: continue
 
 
 if __name__ == "__main__":
