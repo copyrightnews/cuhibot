@@ -41,18 +41,35 @@ html, body {
 
 .page {
   position: absolute; inset: 0; overflow-y: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: none; /* prevent iOS bounce glitch during transition */
   padding-bottom: calc(var(--tab-height) + 20px);
-  opacity: 0; 
+  background: var(--bg); /* solid background prevents see-through ghosting */
+  opacity: 0;
+  visibility: hidden;
   /* [SUPERPOWER] iOS Slide Transition */
-  transform: translateX(100%);
+  transform: translate3d(100%, 0, 0);
   will-change: transform, opacity;
-  transition: opacity 0.4s ease, transform 0.6s cubic-bezier(0.32, 0.72, 0, 1);
+  transition: opacity 0.5s ease, transform 0.6s cubic-bezier(0.32, 0.72, 0, 1), visibility 0.6s;
   pointer-events: none;
   -webkit-overflow-scrolling: touch;
+  backface-visibility: hidden;
+  z-index: 1;
 }
-.page.active { opacity: 1; transform: translateX(0); pointer-events: all; }
-.page.exit { opacity: 0; transform: translateX(-30%); }
+.page.active { 
+  opacity: 1; 
+  visibility: visible; 
+  transform: translate3d(0, 0, 0); 
+  pointer-events: all; 
+  z-index: 2; 
+  transition: opacity 0.5s ease, transform 0.6s cubic-bezier(0.32, 0.72, 0, 1); 
+}
+.page.exit { 
+  opacity: 0; 
+  visibility: hidden; 
+  transform: translate3d(-30%, 0, 0); 
+  z-index: 1; 
+  transition: opacity 0.5s ease, transform 0.6s cubic-bezier(0.32, 0.72, 0, 1), visibility 0.6s; 
+}
 
 /* ─ Navigation Bar ─ */
 .nav-bar {
@@ -537,7 +554,7 @@ function navTo(page) {
   
   setTimeout(() => {
     oldPageEl.classList.remove('active', 'exit');
-  }, 800);
+  }, 600);
 
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.querySelector(`[data-tab="${page}"]`).classList.add('active');
