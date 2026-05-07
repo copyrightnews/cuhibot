@@ -44,6 +44,34 @@ html, body {
   overflow: hidden; touch-action: manipulation;
 }
 
+/* ─ Light Theme Override ─ */
+body.theme-light {
+  --bg: #f2f2f7;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #e5e5ea;
+  --bg-grouped: #ffffff;
+  --bg-elevated: rgba(255, 255, 255, 0.8);
+  --text: #000000;
+  --text-secondary: rgba(60, 60, 67, 0.6);
+  --text-tertiary: rgba(60, 60, 67, 0.3);
+  --separator: rgba(60, 60, 67, 0.12);
+  --card-border: rgba(0, 0, 0, 0.08);
+  --card-glow: rgba(10, 132, 255, 0.05);
+}
+body.theme-light .nav-bar {
+  background: rgba(242, 242, 247, 0.72);
+}
+body.theme-light .nav-title {
+  background: linear-gradient(135deg, #000 0%, rgba(0,0,0,0.7) 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+body.theme-light #tabbar {
+  background: rgba(242, 242, 247, 0.88);
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+body.theme-light .ios-switch span { background: #e9e9ea; }
+body.theme-light #toast { background: rgba(255,255,255,0.92); color: #000; border-color: rgba(0,0,0,0.06); }
+
 #app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 #pages { flex: 1; position: relative; overflow: hidden; background: var(--bg); }
 
@@ -92,17 +120,22 @@ html, body {
 /* ─ Navigation Bar ─ */
 .nav-bar {
   position: sticky; top: 0; z-index: 100;
-  padding: 16px 16px 12px;
+  padding: 12px 16px;
   background: rgba(0, 0, 0, 0.72);
   backdrop-filter: blur(24px) saturate(200%);
   -webkit-backdrop-filter: blur(24px) saturate(200%);
   border-bottom: 0.5px solid var(--separator);
 }
 .nav-title {
-  font-size: 34px; font-weight: 800; letter-spacing: -0.8px;
-  background: linear-gradient(135deg, #ffffff 0%, rgba(255,255,255,0.7) 100%);
+  font-size: 20px; font-weight: 700; letter-spacing: -0.3px;
+  text-align: center;
+  background: linear-gradient(135deg, #ffffff 0%, rgba(255,255,255,0.75) 100%);
   -webkit-background-clip: text; -webkit-text-fill-color: transparent;
   background-clip: text;
+}
+.nav-large-title {
+  font-size: 34px; font-weight: 800; letter-spacing: -0.8px;
+  padding: 8px 16px 0;
 }
 .nav-subtitle {
   font-size: 13px; color: var(--blue); text-transform: uppercase;
@@ -123,7 +156,7 @@ html, body {
 .list-group {
   margin: 0 16px;
   background: var(--bg-grouped);
-  border-radius: 14px;
+  border-radius: 10px;
   overflow: hidden;
   border: 0.5px solid var(--card-border);
 }
@@ -161,15 +194,15 @@ html, body {
 }
 .stat-card {
   background: var(--bg-secondary);
-  padding: 18px 16px; border-radius: 18px;
+  padding: 16px 14px; border-radius: 12px;
   display: flex; flex-direction: column;
   border: 0.5px solid var(--card-border);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.2s ease;
   position: relative; overflow: hidden;
 }
 .stat-card::before {
   content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
-  border-radius: 18px 18px 0 0;
+  border-radius: 12px 12px 0 0;
 }
 .stat-card:nth-child(1)::before { background: var(--gradient-blue); }
 .stat-card:nth-child(2)::before { background: var(--gradient-green); }
@@ -181,8 +214,8 @@ html, body {
 
 /* ─ Progress/Disk ─ */
 .disk-card {
-  margin: 16px; padding: 18px; background: var(--bg-secondary);
-  border-radius: 18px; border: 0.5px solid var(--card-border);
+  margin: 16px; padding: 16px; background: var(--bg-secondary);
+  border-radius: 12px; border: 0.5px solid var(--card-border);
 }
 .disk-meta { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 13px; font-weight: 600; }
 .progress-track { height: 6px; background: var(--bg-tertiary); border-radius: 3px; overflow: hidden; }
@@ -192,18 +225,18 @@ html, body {
 /* ─ Buttons ─ */
 .btn {
   display: flex; align-items: center; justify-content: center;
-  width: 100%; padding: 14px; border-radius: 14px;
+  width: 100%; padding: 14px; border-radius: 12px;
   border: none; cursor: pointer; font-size: 17px; font-weight: 600;
   transition: opacity 0.15s, transform 0.2s cubic-bezier(0.25, 1, 0.5, 1), box-shadow 0.2s;
   -webkit-tap-highlight-color: transparent;
   position: relative; overflow: hidden;
 }
-.btn:active { opacity: 0.8; transform: scale(0.96); }
-.btn-primary { background: var(--blue); color: #fff; box-shadow: 0 4px 14px rgba(10, 132, 255, 0.3); }
-.btn-primary:active { box-shadow: 0 2px 6px rgba(10, 132, 255, 0.15); }
+.btn:active { opacity: 0.8; transform: scale(0.97); }
+.btn-primary { background: var(--blue); color: #fff; box-shadow: 0 4px 14px rgba(10, 132, 255, 0.25); }
+.btn-primary:active { box-shadow: 0 2px 6px rgba(10, 132, 255, 0.12); }
 .btn-secondary { background: var(--bg-tertiary); color: var(--blue); }
-.btn-danger { background: rgba(255, 69, 58, 0.15); color: var(--red); }
-.btn-sm { padding: 8px 16px; font-size: 15px; width: auto; border-radius: 10px; }
+.btn-danger { background: rgba(255, 69, 58, 0.12); color: var(--red); }
+.btn-sm { padding: 8px 16px; font-size: 15px; width: auto; border-radius: 8px; }
 
 /* ─ Tab Bar ─ */
 #tabbar {
@@ -302,11 +335,21 @@ html, body {
     <!-- HOME -->
     <div class="page active" id="page-home">
       <div class="nav-bar">
-        <div class="nav-subtitle" id="home-subtitle">DASHBOARD</div>
         <div class="nav-title">Cuhi</div>
       </div>
 
-      <div class="banner" id="active-download-banner">
+      <!-- Account Card -->
+      <div class="list-group" style="margin-top:16px;">
+        <div class="cell chevron" onclick="navTo('settings')">
+          <div class="cell-icon" style="background:var(--gradient-blue); width:40px; height:40px; border-radius:50%; font-size:18px;">👤</div>
+          <div class="cell-body">
+            <div class="cell-label" id="account-name" style="font-weight:600;">User</div>
+            <div class="cell-sub" id="account-id">Tap to manage settings</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="banner" id="active-download-banner" style="border-radius:12px;">
         <div class="dot"></div>
         <div style="flex:1;">
           <div style="font-size:15px; font-weight:600; color:var(--green);">Download in Progress</div>
@@ -358,22 +401,15 @@ html, body {
             <div class="cell-sub" id="home-channel">Not configured</div>
           </div>
         </div>
-        <div class="cell">
-          <div class="cell-icon" style="background:var(--purple);">🍪</div>
-          <div class="cell-body">
-            <div class="cell-label">Cookies Active</div>
-            <div id="home-cookies" style="display:flex; flex-wrap:wrap; gap:4px; margin-top:6px;"></div>
-          </div>
-        </div>
       </div>
     </div>
 
     <!-- SOURCES -->
     <div class="page" id="page-sources">
       <div class="nav-bar">
-        <div class="nav-subtitle" id="sources-subtitle">0 PROFILES</div>
         <div class="nav-title">Sources</div>
       </div>
+      <div class="nav-large-title" id="sources-count">0 Profiles</div>
 
       <div class="sec-title">Add New Source</div>
       <div class="list-group">
@@ -398,7 +434,6 @@ html, body {
     <!-- DOWNLOAD -->
     <div class="page" id="page-download">
       <div class="nav-bar">
-        <div class="nav-subtitle">ACTIONS</div>
         <div class="nav-title">Download</div>
       </div>
 
@@ -449,9 +484,9 @@ html, body {
     <!-- HISTORY -->
     <div class="page" id="page-history">
       <div class="nav-bar">
-        <div class="nav-subtitle" id="history-subtitle">RECENT ACTIVITY</div>
         <div class="nav-title">History</div>
       </div>
+      <div class="nav-large-title" id="history-count">Recent Activity</div>
       <div class="list-group mt16" id="history-container">
         <!-- History rendered here -->
       </div>
@@ -460,9 +495,22 @@ html, body {
     <!-- SETTINGS -->
     <div class="page" id="page-settings">
       <div class="nav-bar">
-        <div class="nav-subtitle">PREFERENCES</div>
         <div class="nav-title">Settings</div>
       </div>
+
+      <div class="sec-title">Appearance</div>
+      <div class="list-group">
+        <div class="cell">
+          <div class="cell-icon" style="background:var(--purple);">🎨</div>
+          <div class="cell-body"><div class="cell-label">Theme</div></div>
+          <select id="set-theme" class="input-field" onchange="setTheme(this.value)" style="width:auto; text-align:right; color:var(--blue); font-weight:600; padding-right:4px;">
+            <option value="auto">Auto</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+      </div>
+      <div class="sec-footer">Auto follows your Telegram theme.</div>
 
       <div class="sec-title">Output Configuration</div>
       <div class="list-group">
@@ -562,6 +610,37 @@ if (!INIT_DATA && window.location.hostname !== 'localhost') {
   document.getElementById('gate').style.display = 'flex';
   document.getElementById('app').style.display = 'none';
 }
+
+// ── Theme System ────────────────────────────────────────────────────────
+function detectTelegramTheme() {
+  const cs = tg?.colorScheme;
+  if (cs === 'light') return 'light';
+  return 'dark';
+}
+
+function applyTheme(mode) {
+  document.body.classList.remove('theme-light');
+  if (mode === 'light') {
+    document.body.classList.add('theme-light');
+  } else if (mode === 'auto') {
+    if (detectTelegramTheme() === 'light') document.body.classList.add('theme-light');
+  }
+}
+
+function setTheme(mode) {
+  localStorage.setItem('cuhi-theme', mode);
+  applyTheme(mode);
+  showToast(mode === 'auto' ? 'Theme: Auto' : mode === 'light' ? 'Theme: Light' : 'Theme: Dark');
+  tg?.HapticFeedback?.selectionChanged();
+}
+
+// Initialize theme on load
+(function initTheme() {
+  const saved = localStorage.getItem('cuhi-theme') || 'auto';
+  applyTheme(saved);
+  const sel = document.getElementById('set-theme');
+  if (sel) sel.value = saved;
+})();
 
 async function callApi(method, path, body) {
   const res = await fetch(API_BASE + path, {
@@ -678,11 +757,15 @@ async function updateHomeStats() {
     
     mbEl.textContent = (stats.downloaded_mb >= 1024) ? (stats.downloaded_mb / 1024).toFixed(2) + ' GB' : stats.downloaded_mb + ' MB';
     
-    document.getElementById('home-subtitle').textContent = stats.username ? `@${stats.username}`.toUpperCase() : 'DASHBOARD';
-    document.getElementById('home-channel').textContent = stats.channel || 'Not configured';
+    // Account card
+    const acctName = document.getElementById('account-name');
+    const acctId = document.getElementById('account-id');
+    if (stats.username) {
+      acctName.textContent = stats.name || stats.username;
+      acctId.textContent = '@' + stats.username;
+    }
     
-    const cookiesEl = document.getElementById('home-cookies');
-    cookiesEl.innerHTML = stats.cookies_active.map(p => `<span style="font-size:12px; background:var(--bg-tertiary); padding:4px 10px; border-radius:6px; color:var(--text); font-weight: 500;">${p.charAt(0).toUpperCase() + p.slice(1)}</span>`).join('');
+    document.getElementById('home-channel').textContent = stats.channel || 'Not configured';
     
     document.getElementById('active-download-banner').classList.toggle('show', stats.download_running);
     document.getElementById('btn-start-dl').style.display = stats.download_running ? 'none' : 'flex';
@@ -709,7 +792,7 @@ async function loadSources() {
   const container = document.getElementById('sources-list-container');
   try {
     const sources = await callApi('GET', '/api/sources');
-    document.getElementById('sources-subtitle').textContent = `${sources.length} PROFILE${sources.length === 1 ? '' : 'S'}`;
+    document.getElementById('sources-count').textContent = `${sources.length} Profile${sources.length === 1 ? '' : 's'}`;
     if (sources.length === 0) {
       container.innerHTML = '<div class="empty-state"><div class="empty-icon">🔗</div><div>No sources added yet</div></div>';
       return;
@@ -775,7 +858,7 @@ async function loadHistory() {
   const container = document.getElementById('history-container');
   try {
     const history = await callApi('GET', '/api/history?limit=50');
-    document.getElementById('history-subtitle').textContent = `${history.length} ENTRIES`;
+    document.getElementById('history-count').textContent = `${history.length} Entries`;
     if (history.length === 0) {
       container.innerHTML = '<div class="empty-state"><div class="empty-icon">📜</div><div>No history available</div></div>';
       return;
