@@ -2162,43 +2162,35 @@ async def _run_miniapp_download(
         flag.unlink(missing_ok=True)
 
 
-async def poll_miniapp_queue(context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not DATA_ROOT.exists():
-        return
-
-    # 1. Handle stops
-    for stop_file in DATA_ROOT.glob("*/stop_flag"):
+async def miniapp_queue_worker(bot) -> None:
+    \"\"\"[SUPERPOWER] Instant worker for Mini App requests.\"\"\"
+    logger.info(\"Mini App Queue Worker active\")
+    while True:
         try:
-            uid = int(stop_file.parent.name)
-        except ValueError:
-            continue
-        if uid in STOP_EVENTS:
-            STOP_EVENTS[uid].set()
-        stop_file.unlink(missing_ok=True)
-
-    # 2. Handle new triggers
-    for trigger_file in DATA_ROOT.glob("*/download_trigger.json"):
-        try:
-            uid = int(trigger_file.parent.name)
-        except ValueError:
-            continue
+            item = await MINIAPP_QUEUE.get()
+            q_type = item.get(\"type\")
+            uid = item.get(\"uid\")
             
-        # Read the trigger
-        try:
-            trigger_data = json.loads(trigger_file.read_text(encoding="utf-8"))
-        except Exception:
-            trigger_data = {}
+            if q_type == \"stop\":
+                if uid in STOP_EVENTS:
+                    STOP_EVENTS[uid].set()
+                    logger.info(\"Instant STOP for uid=%s\", uid)
             
-        trigger_file.unlink(missing_ok=True)
-        
-        if uid in ACTIVE_USERS:
-            continue
-
-        logger.info("poll found trigger for uid=%s", uid)
-        t = asyncio.ensure_future(_run_miniapp_download(uid, trigger_data, context.bot))
-        _TASKS.add(t)
-        t.add_done_callback(_TASKS.discard)
-
+            elif q_type == \"download\":
+                if uid in ACTIVE_USERS:
+                    MINIAPP_QUEUE.task_done()
+                    continue
+                
+                trigger_data = item.get(\"data\", {})
+                logger.info(\"Instant DOWNLOAD for uid=%s\", uid)
+                t = asyncio.ensure_future(_run_miniapp_download(uid, trigger_data, bot))
+                _TASKS.add(t)
+                t.add_done_callback(_TASKS.discard)
+                
+            MINIAPP_QUEUE.task_done()
+        except Exception as e:
+            logger.error(\"Queue worker error: %s\", e)
+            await asyncio.sleep(1)
 
 def main() -> None:
     if TOKEN == "YOUR_BOT_TOKEN": return
@@ -2283,6 +2275,13 @@ def main() -> None:
             asyncio.ensure_future(_poll_loop())
 
         app.post_init = _chained_post_init
+
+    app.run_polling(allowed_updates=["message", "callback_query"])
+
+
+if __name__ == "__main__":
+    main()
+st_init = _chained_post_init
 
     app.run_polling(allowed_updates=["message", "callback_query"])
 

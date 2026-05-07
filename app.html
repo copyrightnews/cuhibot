@@ -37,18 +37,21 @@ html, body {
 }
 
 #app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
-#pages { flex: 1; position: relative; overflow: hidden; }
+#pages { flex: 1; position: relative; overflow: hidden; background: var(--bg); }
 
 .page {
   position: absolute; inset: 0; overflow-y: auto;
   overscroll-behavior: contain;
   padding-bottom: calc(var(--tab-height) + 20px);
-  opacity: 0; transform: scale(0.98);
-  transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  opacity: 0; 
+  /* [SUPERPOWER] iOS Slide Transition */
+  transform: translateX(30px);
+  transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.4s cubic-bezier(0.1, 0.9, 0.2, 1);
   pointer-events: none;
   -webkit-overflow-scrolling: touch;
 }
-.page.active { opacity: 1; transform: scale(1); pointer-events: all; }
+.page.active { opacity: 1; transform: translateX(0); pointer-events: all; }
+.page.exit { opacity: 0; transform: translateX(-30px); }
 
 /* ─ Navigation Bar ─ */
 .nav-bar {
@@ -198,6 +201,21 @@ html, body {
 .c-purple { color: var(--purple); }
 .mt16 { margin-top: 16px; }
 .mb24 { margin-bottom: 24px; }
+
+.ios-switch { position: relative; width: 51px; height: 31px; flex-shrink: 0; user-select: none; -webkit-tap-highlight-color: transparent; }
+.ios-switch input { opacity: 0; width: 0; height: 0; }
+.ios-switch span {
+  position: absolute; inset: 0; background: #39393d;
+  border-radius: 16px; transition: .2s; cursor: pointer;
+}
+.ios-switch span::before {
+  content: ""; position: absolute; height: 27px; width: 27px;
+  left: 2px; bottom: 2px; background: white;
+  border-radius: 50%; transition: .2s;
+  box-shadow: 0 3px 8px rgba(0,0,0,0.15);
+}
+.ios-switch input:checked + span { background: #30d158; }
+.ios-switch input:checked + span::before { transform: translateX(20px); }
 </style>
 </head>
 <body>
@@ -445,25 +463,19 @@ html, body {
 
 <div id="toast" style="position:fixed; bottom:100px; left:50%; transform:translateX(-50%) translateY(20px); background:rgba(40,40,40,0.95); backdrop-filter:blur(10px); padding:12px 24px; border-radius:100px; color:#fff; font-size:15px; font-weight:500; opacity:0; transition:all 0.3s; pointer-events:none; z-index:9999; border:0.5px solid rgba(255,255,255,0.1); box-shadow: 0 4px 12px rgba(0,0,0,0.15);"></div>
 
-<style>
-.ios-switch { position: relative; width: 51px; height: 31px; flex-shrink: 0; }
-.ios-switch input { opacity: 0; width: 0; height: 0; }
-.ios-switch span {
-  position: absolute; inset: 0; background: #39393d;
-  border-radius: 16px; transition: .2s; cursor: pointer;
-}
-.ios-switch span::before {
-  content: ""; position: absolute; height: 27px; width: 27px;
-  left: 2px; bottom: 2px; background: white;
-  border-radius: 50%; transition: .2s;
-  box-shadow: 0 3px 8px rgba(0,0,0,0.15);
-}
-.ios-switch input:checked + span { background: #30d158; }
-.ios-switch input:checked + span::before { transform: translateX(20px); }
-</style>
-
 <script>
 const tg = window.Telegram?.WebApp;
+let activePage = 'home';
+
+// Visibility API to save battery/server
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    stopAllPolling();
+  } else if (activePage === 'home') {
+    startHomePolling();
+  }
+});
+
 if (tg) {
   tg.ready();
   tg.expand();
@@ -508,17 +520,29 @@ function showToast(msg) {
 }
 
 function navTo(page) {
-  activePage = page;
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  if (page === activePage) return;
+  
+  const oldPageEl = document.getElementById('page-' + activePage);
+  const newPageEl = document.getElementById('page-' + page);
+  
+  // [SUPERPOWER] iOS Motion Transition
+  oldPageEl.classList.add('exit');
+  setTimeout(() => {
+    oldPageEl.classList.remove('active', 'exit');
+    newPageEl.classList.add('active');
+  }, 100);
+
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  document.getElementById('page-' + page).classList.add('active');
   document.querySelector(`[data-tab="${page}"]`).classList.add('active');
   
+  activePage = page;
   stopAllPolling();
   if (page === 'home') startHomePolling();
   if (page === 'sources') loadSources();
   if (page === 'history') loadHistory();
   if (page === 'settings') loadSettings();
+  
+  // [SUPERPOWER] Haptic Feedback on Tab
   tg?.HapticFeedback?.selectionChanged();
 }
 
@@ -714,18 +738,6 @@ async function uploadCookie() {
 async function deleteCookie() {
   const platform = document.getElementById('cookie-platform').value;
   try {
-    await callApi('DELETE', `/api/cookies/${platform}`);
-    showToast(`${platform} cookie deleted`);
-    loadSettings();
-    tg?.HapticFeedback?.notificationOccurred('warning');
-  } catch(e) { showToast(e.message); }
-}
-
-// Boot
-startHomePolling();
-</script>
-</body>
-</html>ry {
     await callApi('DELETE', `/api/cookies/${platform}`);
     showToast(`${platform} cookie deleted`);
     loadSettings();
