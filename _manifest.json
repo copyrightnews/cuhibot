@@ -1,0 +1,13 @@
+{
+  "task": "update_version",
+  "workspace": "cuhibot",
+  "original_model": "GPT-OSS 120B",
+  "current_model": "Gemini 3 Flash",
+  "total_parts": 1,
+  "parts_completed": [1],
+  "stopped_at": null,
+  "next_part": null,
+  "next_function": null,
+  "status": "complete",
+  "style_notes": "Version bump v2.0.2 applied across bot.py, README.md, and Dockerfile."
+}

@@ -5,7 +5,7 @@
 Cuhi Bot is a self-hosted Telegram bot and **Mini App** for archiving media from Instagram, TikTok, Facebook, and X (Twitter) — delivered directly to your Telegram channels with a premium iOS-inspired control panel.
 
 <p align="center">
-  <b>v2.0.1</b> · Stable Release · Production Hardened
+  <b>v2.0.2</b> · Stable Release · Production Hardened
 </p>
 
 ---

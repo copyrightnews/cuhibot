@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cuhi Bot v2.0.1 — production-hardened & async-optimized edition (Stable Release).
+Cuhi Bot v2.0.2 — production-hardened & async-optimized edition (Stable Release).
 
 Platforms   : Instagram, TikTok, Facebook, X (Twitter)
 Persistence : per-user JSON files with async-safe file locks
@@ -42,8 +42,10 @@ import os
 import re
 import shutil
 import signal
+import subprocess
+import threading
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -64,7 +66,6 @@ _IO_POOL = ThreadPoolExecutor(max_workers=4)
 
 TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
 
-import threading
 import server as _server_module
 domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
 MINI_APP_URL = f"https://{domain}" if domain else ""
@@ -117,6 +118,7 @@ PLATFORM_URL_HINTS: dict[str, str] = {
 
 PHOTO_EXT = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"})
 VIDEO_EXT = frozenset({".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v"})
+ALL_MEDIA_EXT = PHOTO_EXT | VIDEO_EXT
 
 MEDIA_GROUP_MAX = 10
 STATUS_MIN_GAP = 2.0       # seconds between status edits
@@ -175,7 +177,7 @@ def locked_file(target: Path):
             break
         except FileExistsError:
             try:
-                # [FIXED] Stale lock detection remains but we use monotonic time
+                # Stale lock detection — wall-clock time to match st_mtime
                 age = time.time() - lock_path.stat().st_mtime
                 if age > 30:
                     lock_path.unlink(missing_ok=True)
@@ -422,11 +424,8 @@ async def set_channel(uid: int, value) -> None:
 
 
 async def total_profiles(uid: int) -> int:
-    total = 0
-    for p in PLATFORMS:
-        profiles = await read_profiles(uid, p)
-        total += len(profiles)
-    return total
+    results = await asyncio.gather(*(read_profiles(uid, p) for p in PLATFORMS))
+    return sum(len(r) for r in results)
 
 
 async def cookie_summary(uid: int) -> str:
@@ -800,7 +799,7 @@ def build_gdl_cmd(
         effective = stories_url_for(platform, url)
     elif mode == "highlights":
         effective = highlights_url_for(platform, url)
-    elif mode == "both" or mode == "mixed":
+    elif mode in ("both", "mixed"):
         # 'both' is a meta-mode, 'mixed' is the actual run mode for both
         effective = url
     else:
@@ -817,7 +816,6 @@ def build_gdl_cmd(
 # 8. SENDER
 # =============================================================================
 
-from contextlib import ExitStack
 
 def file_kind(f: Path) -> str:
     return "photo" if f.suffix.lower() in PHOTO_EXT else "video"
@@ -1173,7 +1171,6 @@ async def realtime_download(
                     if os.name != "nt":
                         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                     else:
-                        import subprocess
                         subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
                                        capture_output=True, check=False)
                 except Exception:
@@ -1193,7 +1190,10 @@ async def realtime_download(
                         continue
                     try:
                         s1 = await asyncio.to_thread(lambda _f=f: _f.stat().st_size)
-                        await asyncio.sleep(0.5) # [FIXED] Safer gap for disk latency
+                        await asyncio.sleep(0.5)
+                        # Re-check seen after sleep to prevent race with _read_stdout
+                        if f in seen:
+                            continue
                         s2 = await asyncio.to_thread(lambda _f=f: _f.stat().st_size)
                         if s1 == s2:
                             seen.add(f)
@@ -1242,10 +1242,9 @@ async def realtime_download(
             archive.unlink(missing_ok=True)
             
         if await asyncio.to_thread(out_dir.exists):
-            all_media_ext = PHOTO_EXT | VIDEO_EXT
             files = await asyncio.to_thread(lambda: list(out_dir.iterdir()))
             for f in files:
-                if f.is_file() and f.suffix.lower() not in all_media_ext:
+                if f.is_file() and f.suffix.lower() not in ALL_MEDIA_EXT:
                     try:
                         await asyncio.to_thread(f.unlink, missing_ok=True)
                     except OSError:
@@ -1261,9 +1260,6 @@ async def realtime_download(
                 await proc.wait()
             except Exception:
                 pass
-        
-        stdout_task.cancel()
-        stderr_task.cancel()
 
     return sent_count
 
@@ -1937,6 +1933,10 @@ async def cmd_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     ok, err = validate_url(url, platform)
     if not ok: return
     if uid in ACTIVE_USERS: return
+    allowed, remaining = _check_rate_limit(uid)
+    if not allowed:
+        await update.message.reply_text(f"⏳ Wait {remaining}s.")
+        return
     _record_download_time(uid)
     handle = handle_from_url(url)
     ch = await get_channel(uid)
@@ -2050,8 +2050,10 @@ async def _restore_schedules(app: Application) -> None:
             s = await read_settings(uid)
             interval_key = s.get("schedule", "off")
             if interval_key == "off" or interval_key not in SCHEDULE_OPTIONS: continue
+            chat_id = s.get("schedule_chat_id")
+            if not chat_id: continue
             interval = SCHEDULE_OPTIONS[interval_key]
-            app.job_queue.run_repeating(_scheduled_job, interval=interval, first=interval, name=f"schedule_{uid}", data={"uid": uid, "chat_id": s.get("schedule_chat_id"), "uname": s.get("schedule_uname"), "name": s.get("schedule_name")})
+            app.job_queue.run_repeating(_scheduled_job, interval=interval, first=interval, name=f"schedule_{uid}", data={"uid": uid, "chat_id": chat_id, "uname": s.get("schedule_uname", "user"), "name": s.get("schedule_name", "User")})
         except Exception: pass
 
 
@@ -2194,7 +2196,9 @@ async def miniapp_queue_worker(bot) -> None:
 async def _combined_post_init(application: Application) -> None:
     """Combined post_init: restore schedules + start queue worker."""
     await _restore_schedules(application)
-    asyncio.create_task(miniapp_queue_worker(application.bot))
+    worker = asyncio.create_task(miniapp_queue_worker(application.bot))
+    _TASKS.add(worker)
+    worker.add_done_callback(_TASKS.discard)
 
 
 def main() -> None:

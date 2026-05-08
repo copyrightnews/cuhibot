@@ -117,8 +117,8 @@ def read_profiles(uid: int, platform: str) -> list[str]:
     p = user_dir(uid) / f"{platform}_profiles.txt"
     if not p.exists():
         return []
-    lines = [l.strip() for l in p.read_text(encoding="utf-8").splitlines()]
-    return [l for l in lines if l and not l.startswith("#")]
+    lines = [line.strip() for line in p.read_text(encoding="utf-8").splitlines()]
+    return [line for line in lines if line and not line.startswith("#")]
 
 def write_profiles(uid: int, platform: str, urls: list[str]):
     p = user_dir(uid) / f"{platform}_profiles.txt"
@@ -152,7 +152,7 @@ def read_history(uid: int, limit: int = 100) -> list[dict]:
         return []
     # Normalize: ensure each item exposes a "source" field
     result = []
-    for item in items[-limit:]:
+    for item in items[:limit]:
         if not isinstance(item, dict):
             continue
         # Try every possible key name for the source URL, including 'user' from bot.py
@@ -164,7 +164,7 @@ def read_history(uid: int, limit: int = 100) -> list[dict]:
             **item,
             "source": source,  # always present
         })
-    return list(reversed(result))  # newest first
+    return result  # already newest-first from bot.py's insert(0, ...)
 
 def clear_history(uid: int) -> None:
     hf = user_dir(uid) / "history.json"
