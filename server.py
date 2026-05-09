@@ -451,10 +451,13 @@ async def list_files(uid: int = Depends(get_uid)):
     if not dl_dir.exists():
         return []
     
+    MEDIA_EXTS = {
+        ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp",
+        ".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v"
+    }
     files = []
     for f in dl_dir.rglob("*"):
-        if f.is_file():
-            # Get path relative to the downloads folder
+        if f.is_file() and f.suffix.lower() in MEDIA_EXTS:
             rel_path = f.relative_to(dl_dir)
             files.append({
                 "path": str(rel_path).replace("\\", "/"),

@@ -940,13 +940,15 @@ async function syncNativeFiles() {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
 
         // Convert to base64 for Capacitor writeFile
+        // Use chunk approach to avoid btoa stack overflow on large files
         const arrayBuf = await resp.arrayBuffer();
         const bytes = new Uint8Array(arrayBuf);
-        let binary = '';
-        for (let i = 0; i < bytes.byteLength; i++) {
-          binary += String.fromCharCode(bytes[i]);
+        let base64 = '';
+        const CHUNK = 8192;
+        for (let i = 0; i < bytes.byteLength; i += CHUNK) {
+          base64 += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
         }
-        const base64 = btoa(binary);
+        base64 = btoa(base64);
 
         // Write to Documents/CuhiBot/<platform>/<handle>/<mode>/filename
         const localPath = 'CuhiBot/' + file.path;

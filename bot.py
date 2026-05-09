@@ -2165,14 +2165,16 @@ async def _run_miniapp_download(
                     )
                     total_sent_count += sent
 
-        # Notify user in DM when done
-        try:
-            summary = f"✅ Mini App download complete — {total_sent_count} file(s) sent."
-            if stop_event.is_set():
-                summary = f"⏹ Mini App download stopped — {total_sent_count} file(s) sent."
-            await bot.send_message(chat_id=uid, text=summary)
-        except Exception:
-            pass
+        # Only notify via Telegram DM for Telegram clients
+        # Android client checks status via the app UI and /api/files endpoint
+        if client != "android":
+            try:
+                summary = f"✅ Mini App download complete — {total_sent_count} file(s) sent."
+                if stop_event.is_set():
+                    summary = f"⏹ Mini App download stopped — {total_sent_count} file(s) sent."
+                await bot.send_message(chat_id=uid, text=summary)
+            except Exception:
+                pass
 
     except Exception as exc:
         logger.exception("_run_miniapp_download error for uid=%s", uid)
