@@ -50,11 +50,22 @@ log = logging.getLogger("cuhi.server")
 
 def _validate_init_data(init_data: str) -> dict:
     """
-    Validate Telegram WebApp initData HMAC-SHA256.
+    Validate Telegram WebApp initData HMAC-SHA256 or standalone App Token.
     Returns user dict if valid. Raises HTTPException(401) if invalid/missing.
     """
     if not init_data:
-        raise HTTPException(status_code=401, detail="Open this app inside Telegram")
+        raise HTTPException(status_code=401, detail="Open this app inside Telegram or log in")
+
+    # Native Android App Token bypass: format "UID:HMAC"
+    if ":" in init_data and "hash=" not in init_data:
+        try:
+            uid_str, signature = init_data.split(":", 1)
+            expected = hmac.new(b"AppToken", f"{uid_str}:{BOT_TOKEN}".encode(), hashlib.sha256).hexdigest()
+            if hmac.compare_digest(expected, signature):
+                return {"id": int(uid_str), "first_name": "App User", "username": "app"}
+        except Exception:
+            pass
+        raise HTTPException(status_code=401, detail="Invalid App Token")
 
     parsed = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
     received_hash = parsed.pop("hash", None)

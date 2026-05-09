@@ -38,6 +38,8 @@ import asyncio
 import base64
 import json
 import logging
+import hashlib
+import hmac
 import os
 import re
 import shutil
@@ -1445,6 +1447,25 @@ async def _answer(q) -> None:
         pass
 
 
+async def cmd_app(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Generate a login token for the standalone Android App."""
+    if not update.message or not update.effective_user: return
+    uid = update.effective_user.id
+    if ALLOWED_USERS and uid not in ALLOWED_USERS and uid not in ADMIN_IDS:
+        return
+        
+    signature = hmac.new(b"AppToken", f"{uid}:{TOKEN}".encode(), hashlib.sha256).hexdigest()
+    app_token = f"{uid}:{signature}"
+    
+    text = (
+        "📱 *Android App Login*\n\n"
+        "Copy the token below and paste it into the Android App to log in:\n\n"
+        f"`{app_token}`\n\n"
+        "Keep this token secret!"
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     uid, uname, name = _user(update)
     if not _is_allowed(uid):
@@ -2210,6 +2231,7 @@ def main() -> None:
     # Navigation & Core
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("menu", cmd_start))
+    app.add_handler(CommandHandler("app", cmd_app))
     app.add_handler(CommandHandler("status", cmd_status))
     
     # Management
