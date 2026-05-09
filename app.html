@@ -649,7 +649,13 @@ if (tg) {
 let INIT_DATA = (tg && tg.initData) || '';
 let API_BASE = window.location.origin;
 
-const isNativeApp = window.location.hostname === 'localhost' || !(tg && tg.initData);
+// Detect if running inside native Capacitor container (Android/iOS APK)
+// window.Capacitor.isNativePlatform() is the correct v6+ API
+const isNativeApp = (
+  (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
+  window.location.hostname === 'localhost' ||
+  !(tg && tg.initData)
+);
 
 if (isNativeApp) {
   const savedToken = localStorage.getItem('cuhi_app_token');
@@ -882,44 +888,85 @@ async function updateHomeStats() {
 }
 
 let isSyncing = false;
+let storagePermGranted = false;
+
+async function requestStoragePermission() {
+  // Only needed in native Capacitor context
+  if (!window.Capacitor || !window.Capacitor.isNativePlatform || !window.Capacitor.isNativePlatform()) return true;
+  const CapFS = window.CapacitorFilesystem;
+  if (!CapFS || !CapFS.Filesystem) return false;
+  try {
+    const perm = await CapFS.Filesystem.requestPermissions();
+    return perm && perm.publicStorage === 'granted';
+  } catch(e) {
+    console.error('Permission request failed', e);
+    return false;
+  }
+}
+
 async function syncNativeFiles() {
-  if (!window.Capacitor || !window.Capacitor.Plugins || !window.Capacitor.Plugins.Filesystem) return;
+  // Only run inside the native Capacitor Android/iOS container
+  if (!window.Capacitor || !window.Capacitor.isNativePlatform || !window.Capacitor.isNativePlatform()) return;
+  const CapFS = window.CapacitorFilesystem;
+  if (!CapFS || !CapFS.Filesystem) return;
   if (isSyncing) return;
   isSyncing = true;
-  
+
   try {
-    const { Filesystem, Directory } = window.Capacitor.Plugins;
-    const files = await callApi('GET', '/api/files');
-    
-    if (files && files.length > 0) {
-      document.getElementById('dl-status-info').textContent = `Syncing ${files.length} file(s) to phone...`;
-      
-      for (const file of files) {
-        try {
-          const downloadUrl = API_BASE + '/api/files/' + encodeURIComponent(file.path);
-          // Save in Documents/CuhiBot/ followed by original structure
-          const localPath = 'CuhiBot/' + file.path;
-          
-          await Filesystem.downloadFile({
-            url: downloadUrl,
-            path: localPath,
-            directory: Directory.Documents,
-            headers: {
-              'X-Init-Data': INIT_DATA
-            }
-          });
-          
-          // Delete from server after successful download
-          await callApi('DELETE', '/api/files/' + encodeURIComponent(file.path));
-          
-        } catch(err) {
-          console.error("Failed to sync file", file.path, err);
-        }
+    // Request storage permission once per session
+    if (!storagePermGranted) {
+      storagePermGranted = await requestStoragePermission();
+      if (!storagePermGranted) {
+        document.getElementById('dl-status-info').textContent = '⚠️ Storage permission denied.';
+        return;
       }
-      document.getElementById('dl-status-info').textContent = 'Sync complete.';
     }
+
+    const { Filesystem, Directory } = CapFS;
+    const files = await callApi('GET', '/api/files');
+
+    if (!files || files.length === 0) return;
+
+    document.getElementById('dl-status-info').textContent = 'Syncing ' + files.length + ' file(s) to phone...';
+
+    for (const file of files) {
+      try {
+        const downloadUrl = API_BASE + '/api/files/' + file.path.split('/').map(encodeURIComponent).join('/');
+
+        // Fetch the raw bytes from server
+        const resp = await fetch(downloadUrl, {
+          headers: { 'X-Init-Data': INIT_DATA }
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+
+        // Convert to base64 for Capacitor writeFile
+        const arrayBuf = await resp.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuf);
+        let binary = '';
+        for (let i = 0; i < bytes.byteLength; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        const base64 = btoa(binary);
+
+        // Write to Documents/CuhiBot/<platform>/<handle>/<mode>/filename
+        const localPath = 'CuhiBot/' + file.path;
+        await Filesystem.writeFile({
+          path: localPath,
+          data: base64,
+          directory: Directory.Documents,
+          recursive: true
+        });
+
+        // Delete from server after confirmed write
+        await callApi('DELETE', '/api/files/' + file.path.split('/').map(encodeURIComponent).join('/'));
+
+      } catch(err) {
+        console.error('Failed to sync file', file.path, err);
+      }
+    }
+    document.getElementById('dl-status-info').textContent = 'Sync complete — ' + files.length + ' file(s) saved.';
   } catch(e) {
-    console.error("Sync loop error", e);
+    console.error('Sync loop error', e);
   } finally {
     isSyncing = false;
   }

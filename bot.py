@@ -1246,7 +1246,8 @@ async def realtime_download(
         if ignore_archive:
             archive.unlink(missing_ok=True)
             
-        if await asyncio.to_thread(out_dir.exists):
+        # For android client: keep files on disk so /api/files endpoint can serve them
+        if target != "android" and await asyncio.to_thread(out_dir.exists):
             files = await asyncio.to_thread(lambda: list(out_dir.iterdir()))
             for f in files:
                 if f.is_file() and f.suffix.lower() not in ALL_MEDIA_EXT:
