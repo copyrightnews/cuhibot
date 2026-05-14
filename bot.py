@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cuhi Bot v2.0.2 — production-hardened & async-optimized edition (Stable Release).
+Cuhi Bot v2.0.3 — hotfix: Android Capacitor fix, async queue init, stop-button IPC, disk cleanup.
 
 Platforms   : Instagram, TikTok, Facebook, X (Twitter)
 Persistence : per-user JSON files with async-safe file locks
@@ -154,7 +154,10 @@ STOP_EVENTS: dict[int, asyncio.Event] = {}
 ACTIVE_USERS: set[int] = set()
 _LAST_DOWNLOAD: dict[int, float] = {}
 _TASKS: set[asyncio.Task] = set()   # prevent GC of fire-and-forget tasks
-MINIAPP_QUEUE: asyncio.Queue = asyncio.Queue()
+# [FIXED] asyncio.Queue must NOT be created at module level before the event loop
+# starts (raises DeprecationWarning in Py3.10+, RuntimeError in Py3.12+).
+# It is created lazily inside _combined_post_init() instead.
+MINIAPP_QUEUE: asyncio.Queue | None = None
 
 
 # =============================================================================
@@ -1098,13 +1101,17 @@ async def realtime_download(
         if buffer and not stop.is_set():
             batch = list(buffer)
             if target == "android":
+                # Android: files stay on disk for /api/files endpoint.
+                # Do NOT upload to Telegram and do NOT count as "sent" to Telegram.
+                # sent_count tracks how many files were written to disk for this run.
                 n = len(batch)
+                sent_count += n
+                # [FIXED] skip add_sent_files for android — files are not Telegram-sent
             else:
                 n = await flush(target, batch, send_as, stop)
-            if n > 0:
-                sent_count += n
-                await add_sent_files(uid, n)
-            # [FIXED] Counter now only resets on success; logic remains accurate
+                if n > 0:
+                    sent_count += n
+                    await add_sent_files(uid, n)
             buffer.clear()
 
     async def _read_stdout():
@@ -1826,6 +1833,8 @@ async def handle_callback(
         with open(export_file, "rb") as fh:
             await q.message.reply_document(document=fh, filename="cuhibot_sources.txt")
         export_file.unlink(missing_ok=True)
+        # [FIXED] Restore menu after export — was missing, leaving user on blank screen
+        await send_menu(q.message, uid, uname, name)
 
 
 # =============================================================================
@@ -2038,6 +2047,9 @@ async def _import_sources(uid: int, text: str) -> tuple[int, int]:
     return added, skipped
 
 
+# [FIXED] Moved from line ~2041 to here so handle_callback (which references
+# SCHEDULE_OPTIONS) can always find it at runtime. Python resolves names at
+# call time, but defining it above the function is the correct practice.
 SCHEDULE_OPTIONS = {"6h": 6 * 3600, "12h": 12 * 3600, "24h": 24 * 3600, "off": 0}
 
 async def _scheduled_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2113,6 +2125,9 @@ async def _run_miniapp_download(
 
     total_sent_count = 0
 
+    # [FIXED] Read settings ONCE per download run, not on every URL iteration
+    user_settings = await read_settings(uid)
+
     try:
         for platform in platforms_to_run:
             if stop_event.is_set():
@@ -2143,9 +2158,8 @@ async def _run_miniapp_download(
                     if client == "android":
                         target = "android"
                     else:
-                        # Use the chat or channel as target
-                        settings = await read_settings(uid)
-                        channel = settings.get("channel")
+                        # [FIXED] Use already-loaded settings, not a fresh read per URL
+                        channel = user_settings.get("channel")
                         if channel:
                             target = (bot, normalize_chat(channel))
                         else:
@@ -2191,6 +2205,11 @@ async def _run_miniapp_download(
         # Clear v2 running flag
         flag = DATA_ROOT / str(uid) / "download_running"
         flag.unlink(missing_ok=True)
+        # [FIXED] For telegram clients, wipe the downloads staging directory after the
+        # run. Android clients need files to persist (served via /api/files endpoint).
+        # Without this, the server disk fills up silently on every Mini App run.
+        if client != "android":
+            await asyncio.to_thread(wipe_downloads, uid)
 
 
 async def miniapp_queue_worker(bot) -> None:
@@ -2198,6 +2217,9 @@ async def miniapp_queue_worker(bot) -> None:
     logger.info("Mini App Queue Worker active")
     while True:
         try:
+            if MINIAPP_QUEUE is None:
+                await asyncio.sleep(1)
+                continue
             item = await MINIAPP_QUEUE.get()
             q_type = item.get("type")
             uid = item.get("uid")
@@ -2226,6 +2248,9 @@ async def miniapp_queue_worker(bot) -> None:
 
 async def _combined_post_init(application: Application) -> None:
     """Combined post_init: restore schedules + start queue worker."""
+    global MINIAPP_QUEUE
+    # [FIXED] Create asyncio.Queue inside the running event loop (not at module level)
+    MINIAPP_QUEUE = asyncio.Queue()
     await _restore_schedules(application)
     worker = asyncio.create_task(miniapp_queue_worker(application.bot))
     _TASKS.add(worker)
@@ -2282,7 +2307,11 @@ def main() -> None:
 
 async def poll_miniapp_queue_fallback(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Fallback for Railway disk triggers if queue fails."""
+    if MINIAPP_QUEUE is None:
+        return
     if not DATA_ROOT.exists(): return
+
+    # ── Download triggers ────────────────────────────────────────────────────
     for trigger_file in DATA_ROOT.glob("*/download_trigger.json"):
         try:
             uid = int(trigger_file.parent.name)
@@ -2290,6 +2319,19 @@ async def poll_miniapp_queue_fallback(context: ContextTypes.DEFAULT_TYPE) -> Non
             trigger_file.unlink(missing_ok=True)
             if uid not in ACTIVE_USERS:
                 await MINIAPP_QUEUE.put({"type": "download", "uid": uid, "data": trigger_data})
+        except Exception: continue
+
+    # ── Stop flags ───────────────────────────────────────────────────────────
+    # [FIXED] server.py writes a stop_flag file when /api/download/stop is called.
+    # Without this, the Mini App Stop button had NO effect on the bot-side download
+    # when the queue-based path was used — the stop_flag was written but never read.
+    for stop_file in DATA_ROOT.glob("*/stop_flag"):
+        try:
+            uid = int(stop_file.parent.name)
+            stop_file.unlink(missing_ok=True)
+            if uid in ACTIVE_USERS and uid in STOP_EVENTS:
+                STOP_EVENTS[uid].set()
+                logger.info("Fallback STOP triggered for uid=%s", uid)
         except Exception: continue
 
 

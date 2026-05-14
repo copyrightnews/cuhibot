@@ -1,13 +1,38 @@
 {
-  "task": "update_version",
+  "task": "deep_audit_and_fix",
   "workspace": "cuhibot",
-  "original_model": "GPT-OSS 120B",
-  "current_model": "Gemini 3 Flash",
+  "original_model": "Claude Sonnet (Thinking)",
+  "current_model": "Claude Sonnet (Thinking)",
   "total_parts": 1,
   "parts_completed": [1],
   "stopped_at": null,
   "next_part": null,
   "next_function": null,
   "status": "complete",
-  "style_notes": "Version v2.0.2 pushed with commit and tag."
+  "bugs_found": 12,
+  "bugs_fixed": 12,
+  "verified": "YES — py_compile zero errors on bot.py and server.py",
+  "files_changed": [
+    "bot.py",
+    "server.py",
+    "mobile_app/www/index.html",
+    "mobile_app/android/app/src/main/AndroidManifest.xml",
+    "mobile_app/android/variables.gradle",
+    "mobile_app/capacitor.config.json"
+  ],
+  "style_notes": "bot.py: async/await throughout, run_in_executor for all blocking I/O, locked_file for all file writes, STOP_EVENTS dict for per-user cancellation, ACTIVE_USERS set for concurrency guard, MINIAPP_QUEUE lazily initialized inside _combined_post_init. Android: uses target=='android' string comparison inside realtime_download/drain to skip Telegram upload and keep files on disk for /api/files.",
+  "key_fixes_summary": {
+    "CRITICAL_1": "asyncio.Queue module-level init → lazy init in post_init",
+    "CRITICAL_2": "m_export callback missing send_menu → added",
+    "CRITICAL_3": "android drain() called add_sent_files incorrectly → fixed",
+    "CRITICAL_4": "window.CapacitorFilesystem (v3 API) → window.Capacitor.Plugins.Filesystem (v6)",
+    "CRITICAL_5": "Mini App Stop button broken: stop_flag never read by bot → added to fallback poll",
+    "MODERATE_1": "wipe_downloads missing from _run_miniapp_download for telegram clients → added",
+    "MODERATE_2": "settings re-read per URL in inner loop → moved to once before loop",
+    "MODERATE_3": "Missing READ_MEDIA_IMAGES/VIDEO for Android 13+ → added to manifest",
+    "MODERATE_4": "compileSdkVersion=36 unreleased → changed to 35",
+    "MODERATE_5": "isSyncing not reset on perm-denied + no per-file error feedback → fixed both",
+    "MINOR_1": "bare capacitor.config.json → added server/plugin/android blocks",
+    "MINOR_2": "SCHEDULE_OPTIONS defined after handle_callback → moved above"
+  }
 }

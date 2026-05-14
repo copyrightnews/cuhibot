@@ -1,5 +1,22 @@
 {
   "appId": "com.cuhibot.app",
   "appName": "Cuhi",
-  "webDir": "www"
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": true
+  },
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": true,
+      "launchShowDuration": 1500,
+      "backgroundColor": "#000000",
+      "showSpinner": false
+    },
+    "Filesystem": {
+      "readRequiresPermission": true
+    }
+  }
 }

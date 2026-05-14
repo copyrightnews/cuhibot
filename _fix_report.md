@@ -1,98 +1,93 @@
-# Cuhi Bot — Deep Scan Fix Report
-
-**Date:** 2026-05-08
-**Model:** Claude Opus 4.6 (Thinking)
-**Files Audited:** `bot.py` (2262 lines), `server.py` (442 lines)
-
----
-
-## Audit Summary
-
-| Severity | Found | Fixed |
-|----------|-------|-------|
-| CRITICAL | 5     | 5     |
-| MODERATE | 5     | 5     |
-| MINOR    | 2     | 2     |
-| **Total**| **12**| **12**|
+# Deep Audit Fix Report — Full Session
+**Date:** 2026-05-15
+**Model:** Claude Sonnet (Thinking)
+**Files Audited:** bot.py (2340 lines), server.py (515 lines), mobile_app/www/index.html (1184 lines), AndroidManifest.xml, variables.gradle, capacitor.config.json
 
 ---
 
-## CRITICAL Fixes
-
-### 1. Race Condition — Double-Send & Double-Count (bot.py:1190)
-**Root cause:** In `realtime_download`, the directory scanner checks `f in seen`, then sleeps 0.5s for file stability. During that sleep, `_read_stdout` can pick up the same file and add it to `seen` + `buffer`. When the scanner resumes, it doesn't re-check `seen`, causing the file to be buffered twice, sent twice, and bytes counted twice.
-**Fix:** Re-check `if f in seen: continue` after the 0.5s stability sleep.
-
-### 2. Queue Worker Task GC'd (bot.py:2197)
-**Root cause:** `asyncio.create_task(miniapp_queue_worker(...))` returned a task that was never stored. Python's GC can collect it, silently killing the Mini App queue processing.
-**Fix:** Track the task in `_TASKS` set with a `discard` done-callback.
-
-### 3. cmd_link Skips Rate Limit (bot.py:1940)
-**Root cause:** `/link` command called `_record_download_time()` but never called `_check_rate_limit()` first, allowing unlimited rapid downloads.
-**Fix:** Added rate limit check with early return before recording download time.
-
-### 4. _restore_schedules Crashes on None chat_id (bot.py:2054)
-**Root cause:** If `schedule_chat_id` was never saved (e.g., settings migration), `_scheduled_job` would crash trying to send to `None` chat.
-**Fix:** Skip schedule restoration when `chat_id` is falsy; provide safe defaults for `uname`/`name`.
-
-### 5. read_history Returns Oldest Items (server.py:155)
-**Root cause:** History JSON stores items newest-first (`insert(0, entry)`). `items[-limit:]` selects the *last* N items = the oldest. Then `reversed()` just reorders them.
-**Fix:** Changed to `items[:limit]` (first N = newest) and removed the incorrect `reversed()`.
+## BUGS FOUND: 12  (CRITICAL: 5 | MODERATE: 5 | MINOR: 2)
+## BUGS FIXED: 12
+## VERIFIED: YES — py_compile passes, zero errors
+## REMAINING: NONE
 
 ---
 
-## MODERATE Fixes
+## [CRITICAL] Fixes
 
-### 6. Mid-File Imports (bot.py:67, 820, 1176)
-**Root cause:** `import threading`, `from contextlib import ExitStack`, and `import subprocess` were scattered through the file body, violating PEP 8 and making dependency tracking difficult.
-**Fix:** Consolidated all three into the top-level import section.
+### C-1 — `asyncio.Queue()` at module level (bot.py:157)
+**Root cause:** `MINIAPP_QUEUE = asyncio.Queue()` was created before the asyncio event loop
+starts. Raises DeprecationWarning in Python 3.10+, RuntimeError in Python 3.12+.
+**Fix:** Changed to `None` at module level. Lazily initialized inside `_combined_post_init()`
+(inside the running event loop). Added `if MINIAPP_QUEUE is None` null-guards in
+`miniapp_queue_worker()` and `poll_miniapp_queue_fallback()`.
 
-### 7. Repeated frozenset Creation (bot.py:1070, 1245)
-**Root cause:** `PHOTO_EXT | VIDEO_EXT` creates a new frozenset on every `realtime_download` call.
-**Fix:** Added module-level `ALL_MEDIA_EXT = PHOTO_EXT | VIDEO_EXT` constant; used it in all relevant locations.
+### C-2 — `m_export` callback missing `send_menu()` (bot.py:1826)
+**Root cause:** After sending the export file the `handle_callback` returned with no UI restore.
+User received the document but was left on a blank screen with no menu.
+**Fix:** Added `await send_menu(q.message, uid, uname, name)` after document send.
 
-### 8. Sequential I/O in total_profiles (bot.py:424)
-**Root cause:** Four `await read_profiles()` calls executed sequentially, adding unnecessary latency.
-**Fix:** Replaced with `asyncio.gather()` for parallel execution (~4× faster).
+### C-3 — Android `drain()` wrongly called `add_sent_files()` (bot.py:1100)
+**Root cause:** For `target == "android"` files stay on disk. They are never sent to Telegram.
+But `add_sent_files(uid, n)` was still called, incorrectly inflating the `files_sent` counter.
+**Fix:** Skip `add_sent_files()` for android target. Only increment local `sent_count`.
 
-### 9. Style: `or` vs `in` (bot.py:803)
-**Root cause:** `mode == "both" or mode == "mixed"` is less readable and marginally slower than membership test.
-**Fix:** Changed to `mode in ("both", "mixed")`.
+### C-4 — Wrong Capacitor v6 plugin API (www/index.html:896)
+**Root cause:** `window.CapacitorFilesystem` is a Capacitor v3-era pattern. In Capacitor v6
+plugins are at `window.Capacitor.Plugins.Filesystem`. The old namespace is always `undefined`
+so every native file sync silently fails — files are never saved to the phone.
+**Fix:** Both `requestStoragePermission()` and `syncNativeFiles()` now use
+`window.Capacitor.Plugins.Filesystem`. Replaced `Directory.Documents` enum (not available
+without a bundler) with the raw string constant `'DOCUMENTS'`.
 
-### 10. Variable Shadowing (server.py:120)
-**Root cause:** Loop variable `l` shadows the built-in `list()`.
-**Fix:** Renamed to `line`.
-
----
-
-## MINOR Fixes
-
-### 11. Misleading Comment (bot.py:178)
-**Root cause:** Comment said "we use monotonic time" but the code correctly uses `time.time()` (wall-clock) to compare against `st_mtime`.
-**Fix:** Updated comment to accurately reflect the wall-clock comparison.
-
-### 12. Dead .cancel() Calls (bot.py:1265-1266)
-**Root cause:** `stdout_task.cancel()` and `stderr_task.cancel()` called after `asyncio.gather()` already completed — the tasks were already done.
-**Fix:** Removed the dead calls.
-
----
-
-## Performance Improvements Applied
-
-| Area | Before | After |
-|------|--------|-------|
-| `total_profiles` | 4 sequential executor calls | 1 parallel `gather()` |
-| `ALL_MEDIA_EXT` | Rebuilt per download call | Precomputed constant |
-| Import loading | 3 mid-file imports | All at module load |
-| Rate limiting | `/link` had no limit | Full rate limit enforcement |
+### C-5 — Mini App Stop button broken in fallback path (bot.py:poll_miniapp_queue_fallback)
+**Root cause:** `server.py /api/download/stop` writes a `stop_flag` file per-user. But
+`poll_miniapp_queue_fallback` only polled `download_trigger.json` — `stop_flag` was written
+to disk and never read by bot.py. The Stop button in the Mini App had zero effect on the
+bot-side download via the file-based fallback path.
+**Fix:** Added a second glob loop in `poll_miniapp_queue_fallback` that reads `*/stop_flag`,
+unlinks the file, and calls `STOP_EVENTS[uid].set()` for the matching user.
 
 ---
 
-## Verification
+## [MODERATE] Fixes
 
-```
-BUGS FOUND    : 12 (CRITICAL: 5 | MODERATE: 5 | MINOR: 2)
-BUGS FIXED    : 12
-VERIFIED      : YES (py_compile passes for both bot.py and server.py)
-REMAINING     : NONE
-```
+### M-1 — `_run_miniapp_download` disk leak for Telegram clients (bot.py:2200)
+**Root cause:** `do_download()` calls `wipe_downloads(uid)` after every run. But
+`_run_miniapp_download` (used by the Mini App) did NOT call `wipe_downloads`. Every Mini App
+triggered download accumulated staging files on the server disk silently.
+**Fix:** Added `await asyncio.to_thread(wipe_downloads, uid)` in the `finally` block,
+gated on `client != "android"` (android clients need files to stay for `/api/files`).
+
+### M-2 — `settings` re-read on every URL in inner loop (bot.py:2159)
+**Root cause:** `await read_settings(uid)` was called inside `for url in profiles` — once per
+source URL per platform. On a user with 50 sources this means 50+ blocking disk reads per run.
+**Fix:** Moved `user_settings = await read_settings(uid)` to once before the loop.
+Inner loop now uses `user_settings.get("channel")` directly.
+
+### M-3 — Missing Android 13+ media permissions (AndroidManifest.xml)
+**Root cause:** `READ/WRITE_EXTERNAL_STORAGE` capped at `maxSdkVersion="32"`. On Android 13+
+(API 33+) Capacitor Filesystem needs `READ_MEDIA_IMAGES` and `READ_MEDIA_VIDEO`.
+**Fix:** Added `READ_MEDIA_IMAGES`, `READ_MEDIA_VIDEO`, `POST_NOTIFICATIONS`.
+
+### M-4 — `compileSdkVersion = 36` unreleased (variables.gradle)
+**Root cause:** SDK 36 is not a stable release. Gradle would fail to resolve it.
+**Fix:** Changed `compileSdkVersion` and `targetSdkVersion` from `36` → `35`.
+
+### M-5 — No per-file error feedback + `isSyncing` not reset on perm-denied (www/index.html)
+**Root cause 1:** Individual file failures swallowed silently, no UI feedback.
+**Root cause 2:** `isSyncing` not reset to `false` on early storage permission denied return,
+permanently blocking future sync attempts for the session.
+**Fix:** Added per-file status updates and error messages with 1.5s pause. Added
+`isSyncing = false` before early permission-denied return.
+
+---
+
+## [MINOR] Fixes
+
+### Mi-1 — Bare `capacitor.config.json` (capacitor.config.json)
+**Fix:** Added `android.allowMixedContent`, `server.androidScheme: "https"`,
+`SplashScreen` block, `Filesystem.readRequiresPermission`.
+
+### Mi-2 — `SCHEDULE_OPTIONS` defined after `handle_callback` (bot.py:2041→2050)
+**Fix:** Moved above `_scheduled_job`. Python resolves names at call time so this was a
+runtime-safe issue, but it is now correctly placed above all its uses.

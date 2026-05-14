@@ -893,10 +893,16 @@ let storagePermGranted = false;
 async function requestStoragePermission() {
   // Only needed in native Capacitor context
   if (!window.Capacitor || !window.Capacitor.isNativePlatform || !window.Capacitor.isNativePlatform()) return true;
-  const CapFS = window.CapacitorFilesystem;
-  if (!CapFS || !CapFS.Filesystem) return false;
+  // [FIXED] Capacitor v6 exposes plugins at window.Capacitor.Plugins.PluginName,
+  // NOT at window.CapacitorFilesystem (that was a v3-era pattern).
+  const Filesystem = window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  if (!Filesystem) {
+    console.warn('Filesystem plugin not available');
+    return false;
+  }
   try {
-    const perm = await CapFS.Filesystem.requestPermissions();
+    const perm = await Filesystem.requestPermissions();
+    // publicStorage === 'granted' covers both READ_MEDIA_* and legacy WRITE_EXTERNAL_STORAGE
     return perm && perm.publicStorage === 'granted';
   } catch(e) {
     console.error('Permission request failed', e);
@@ -907,28 +913,42 @@ async function requestStoragePermission() {
 async function syncNativeFiles() {
   // Only run inside the native Capacitor Android/iOS container
   if (!window.Capacitor || !window.Capacitor.isNativePlatform || !window.Capacitor.isNativePlatform()) return;
-  const CapFS = window.CapacitorFilesystem;
-  if (!CapFS || !CapFS.Filesystem) return;
+  // [FIXED] Use window.Capacitor.Plugins.Filesystem (Capacitor v6 API)
+  const Filesystem = window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+  if (!Filesystem) {
+    console.warn('Filesystem plugin not registered — skipping sync');
+    return;
+  }
   if (isSyncing) return;
   isSyncing = true;
+
+  // [FIXED] Directory enum is not available without a bundler — use the raw
+  // string constants that Capacitor defines internally.
+  // Ref: https://capacitorjs.com/docs/apis/filesystem#directory
+  const DIR_DOCUMENTS = 'DOCUMENTS';
 
   try {
     // Request storage permission once per session
     if (!storagePermGranted) {
       storagePermGranted = await requestStoragePermission();
       if (!storagePermGranted) {
-        document.getElementById('dl-status-info').textContent = '⚠️ Storage permission denied.';
+        document.getElementById('dl-status-info').textContent = '\u26a0\ufe0f Storage permission denied. Grant it in Settings.';
+        isSyncing = false;
         return;
       }
     }
 
-    const { Filesystem, Directory } = CapFS;
     const files = await callApi('GET', '/api/files');
+    if (!files || files.length === 0) {
+      isSyncing = false;
+      return;
+    }
 
-    if (!files || files.length === 0) return;
+    const statusEl = document.getElementById('dl-status-info');
+    statusEl.textContent = 'Syncing ' + files.length + ' file(s) to phone...';
 
-    document.getElementById('dl-status-info').textContent = 'Syncing ' + files.length + ' file(s) to phone...';
-
+    let saved = 0;
+    let failed = 0;
     for (const file of files) {
       try {
         const downloadUrl = API_BASE + '/api/files/' + file.path.split('/').map(encodeURIComponent).join('/');
@@ -939,36 +959,52 @@ async function syncNativeFiles() {
         });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
 
-        // Convert to base64 for Capacitor writeFile
-        // Use chunk approach to avoid btoa stack overflow on large files
+        // Convert to base64 for Capacitor writeFile.
+        // Chunk the btoa conversion to avoid call-stack overflow on large files.
         const arrayBuf = await resp.arrayBuffer();
         const bytes = new Uint8Array(arrayBuf);
-        let base64 = '';
+        let binary = '';
         const CHUNK = 8192;
         for (let i = 0; i < bytes.byteLength; i += CHUNK) {
-          base64 += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
         }
-        base64 = btoa(base64);
+        const base64 = btoa(binary);
 
-        // Write to Documents/CuhiBot/<platform>/<handle>/<mode>/filename
+        // Write to Documents/CuhiBot/<relative-path>
         const localPath = 'CuhiBot/' + file.path;
         await Filesystem.writeFile({
           path: localPath,
           data: base64,
-          directory: Directory.Documents,
+          directory: DIR_DOCUMENTS,
           recursive: true
         });
 
-        // Delete from server after confirmed write
+        // Remove from server only after a confirmed successful write
         await callApi('DELETE', '/api/files/' + file.path.split('/').map(encodeURIComponent).join('/'));
+        saved++;
+        // [FIXED] Update UI so user can see per-file progress instead of silence
+        statusEl.textContent = 'Saved ' + saved + ' / ' + files.length + ' file(s)...';
 
       } catch(err) {
+        failed++;
+        // [FIXED] Show individual file failure in UI (previously only logged to console)
         console.error('Failed to sync file', file.path, err);
+        statusEl.textContent = '\u26a0\ufe0f Failed to save: ' + file.name + ' (' + err.message + ')';
+        // Short pause so user can read the error before it's overwritten
+        await new Promise(r => setTimeout(r, 1500));
       }
     }
-    document.getElementById('dl-status-info').textContent = 'Sync complete — ' + files.length + ' file(s) saved.';
+
+    if (failed === 0) {
+      statusEl.textContent = '\u2705 Sync complete — ' + saved + ' file(s) saved to Documents/CuhiBot/';
+    } else {
+      statusEl.textContent = 'Sync done — ' + saved + ' saved, ' + failed + ' failed. Check console.';
+    }
+
   } catch(e) {
     console.error('Sync loop error', e);
+    const statusEl = document.getElementById('dl-status-info');
+    if (statusEl) statusEl.textContent = '\u26a0\ufe0f Sync error: ' + e.message;
   } finally {
     isSyncing = false;
   }
