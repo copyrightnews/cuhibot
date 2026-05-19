@@ -9,5 +9,5 @@
   "next_part": null,
   "next_function": null,
   "status": "complete",
-  "style_notes": "Downgrade compileSdkVersion and targetSdkVersion in variables.gradle to 35, overwrite index.html with app.html, and integrated @capacitor-community/media to save downloads directly to the Android Photo Gallery under a custom 'CuhiBot' album."
+  "style_notes": "Update compileSdkVersion in variables.gradle to 36 to satisfy AAR metadata constraints of modern AndroidX dependencies (activity 1.11.0, core 1.17.0), keeping targetSdkVersion at 35, overwrite index.html with app.html, and integrated @capacitor-community/media."
 }
