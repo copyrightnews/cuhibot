@@ -1,0 +1,1878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+<title>Cuhi</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-font-smoothing: antialiased; }
+.emoji { font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "Twemoji Mozilla", sans-serif; }
+
+:root {
+  --bg: var(--tg-theme-bg-color, #000000);
+  --bg-secondary: var(--tg-theme-secondary-bg-color, #1c1c1e);
+  --bg-tertiary:  #2c2c2e;
+  --bg-grouped:   var(--tg-theme-secondary-bg-color, #1c1c1e);
+  --bg-elevated:  rgba(44, 44, 46, 0.6);
+  --text:         var(--tg-theme-text-color, #ffffff);
+  --text-secondary: var(--tg-theme-hint-color, rgba(235, 235, 245, 0.6));
+  --text-tertiary:  rgba(235, 235, 245, 0.3);
+  --separator:    rgba(84, 84, 88, 0.36);
+  --blue:         #0a84ff;
+  --green:        #30d158;
+  --red:          #ff453a;
+  --orange:       #ff9f0a;
+  --purple:       #bf5af2;
+  --teal:         #64d2ff;
+  --pink:         #ff375f;
+  --gradient-blue: linear-gradient(135deg, #0a84ff 0%, #5e5ce6 100%);
+  --gradient-green: linear-gradient(135deg, #30d158 0%, #34c759 100%);
+  --gradient-orange: linear-gradient(135deg, #ff9f0a 0%, #ff6723 100%);
+  --gradient-purple: linear-gradient(135deg, #bf5af2 0%, #5e5ce6 100%);
+  --card-border:  rgba(255, 255, 255, 0.06);
+  --card-glow:    rgba(10, 132, 255, 0.08);
+  --safe-bottom:  env(safe-area-inset-bottom, 0px);
+  --tab-height:   84px;
+  --radius:       12px;
+  --radius-lg:    16px;
+  --font:         -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", sans-serif;
+}
+
+html, body {
+  height: 100%; background: var(--bg);
+  color: var(--text); font-family: var(--font);
+  overflow: hidden; touch-action: manipulation;
+}
+
+/* ─ Light Theme Override ─ */
+body.theme-light {
+  --bg: #f2f2f7;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #e5e5ea;
+  --bg-grouped: #ffffff;
+  --bg-elevated: rgba(255, 255, 255, 0.8);
+  --text: #000000;
+  --text-secondary: rgba(60, 60, 67, 0.6);
+  --text-tertiary: rgba(60, 60, 67, 0.3);
+  --separator: rgba(60, 60, 67, 0.12);
+  --card-border: rgba(0, 0, 0, 0.08);
+  --card-glow: rgba(10, 132, 255, 0.05);
+}
+body.theme-light .nav-bar {
+  background: rgba(242, 242, 247, 0.72);
+}
+body.theme-light .nav-title {
+  background: linear-gradient(135deg, #000 0%, rgba(0,0,0,0.7) 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+}
+body.theme-light #tabbar {
+  background: rgba(242, 242, 247, 0.88);
+  border-top-color: rgba(0, 0, 0, 0.08);
+}
+body.theme-light .ios-switch span { background: #e9e9ea; }
+body.theme-light #toast { background: rgba(255,255,255,0.92); color: #000; border-color: rgba(0,0,0,0.06); }
+
+#app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+#pages { flex: 1; position: relative; overflow: hidden; background: var(--bg); }
+
+.page {
+  position: absolute; inset: 0; overflow-y: auto;
+  overscroll-behavior: none;
+  padding-bottom: calc(var(--tab-height) + 20px);
+  background: var(--bg);
+  opacity: 0;
+  visibility: hidden;
+  transform: translate3d(60px, 0, 0);
+  will-change: transform, opacity;
+  transition: opacity 0.35s ease, transform 0.4s cubic-bezier(0.25, 1, 0.5, 1), visibility 0s 0.4s;
+  pointer-events: none;
+  -webkit-overflow-scrolling: touch;
+  backface-visibility: hidden;
+  z-index: 1;
+}
+.page.active {
+  opacity: 1;
+  visibility: visible;
+  transform: translate3d(0, 0, 0);
+  pointer-events: all;
+  z-index: 2;
+  transition: opacity 0.35s ease, transform 0.4s cubic-bezier(0.25, 1, 0.5, 1), visibility 0s;
+}
+.page.exit {
+  opacity: 0;
+  visibility: hidden;
+  transform: translate3d(-40px, 0, 0);
+  z-index: 1;
+  transition: opacity 0.3s ease, transform 0.4s cubic-bezier(0.25, 1, 0.5, 1), visibility 0s 0.4s;
+}
+
+/* ─ Staggered Content Entrance ─ */
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.page.active .stat-cards   { animation: fadeSlideUp 0.45s 0.05s both ease-out; }
+.page.active .disk-card    { animation: fadeSlideUp 0.45s 0.12s both ease-out; }
+.page.active .list-group   { animation: fadeSlideUp 0.45s 0.08s both ease-out; }
+.page.active .sec-title    { animation: fadeSlideUp 0.4s  0.04s both ease-out; }
+.page.active .banner.show  { animation: fadeSlideUp 0.4s  0.02s both ease-out; }
+
+/* ─ Navigation Bar ─ */
+.nav-bar {
+  position: sticky; top: 0; z-index: 100;
+  padding: 12px 16px;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(24px) saturate(200%);
+  -webkit-backdrop-filter: blur(24px) saturate(200%);
+  border-bottom: 0.5px solid var(--separator);
+}
+.nav-title {
+  font-size: 20px; font-weight: 700; letter-spacing: -0.3px;
+  text-align: center;
+  background: linear-gradient(135deg, #ffffff 0%, rgba(255,255,255,0.75) 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.nav-large-title {
+  font-size: 34px; font-weight: 800; letter-spacing: -0.8px;
+  padding: 8px 16px 0;
+}
+.nav-subtitle {
+  font-size: 13px; color: var(--blue); text-transform: uppercase;
+  letter-spacing: 1.2px; font-weight: 600; margin-bottom: 2px;
+}
+
+/* ─ Grouped List Styling ─ */
+.sec-title {
+  padding: 0 32px 8px; margin-top: 28px;
+  font-size: 13px; color: var(--text-secondary);
+  text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px;
+}
+.sec-footer {
+  padding: 8px 32px 0;
+  font-size: 13px; color: var(--text-secondary);
+}
+
+.list-group {
+  margin: 0 16px;
+  background: var(--bg-grouped);
+  border-radius: 10px;
+  overflow: hidden;
+  border: 0.5px solid var(--card-border);
+}
+
+.cell {
+  display: flex; align-items: center;
+  padding: 12px 16px; min-height: 44px;
+  position: relative;
+  background: var(--bg-grouped);
+  transition: background 0.2s;
+}
+.cell:active { background: var(--bg-tertiary); }
+.cell + .cell::after {
+  content: ''; position: absolute; top: 0; left: 16px; right: 0;
+  height: 0.5px; background: var(--separator);
+}
+.cell-icon {
+  width: 32px; height: 32px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; margin-right: 14px; flex-shrink: 0;
+}
+.cell-body { flex: 1; min-width: 0; }
+.cell-label { font-size: 17px; font-weight: 500; color: var(--text); }
+.cell-sub { font-size: 14px; color: var(--text-secondary); margin-top: 2px; }
+.cell-right { margin-left: 8px; color: var(--text-secondary); font-size: 17px; }
+.chevron::after {
+  content: '\203A'; font-size: 22px; color: var(--text-tertiary);
+  margin-left: 8px; font-weight: 300;
+}
+
+/* ─ Stats ─ */
+.stat-cards {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 12px; padding: 0 16px; margin-top: 16px;
+}
+.stat-card {
+  background: var(--bg-secondary);
+  padding: 16px 14px; border-radius: 12px;
+  display: flex; flex-direction: column;
+  border: 0.5px solid var(--card-border);
+  transition: transform 0.2s ease;
+  position: relative; overflow: hidden;
+}
+.stat-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  border-radius: 12px 12px 0 0;
+}
+.stat-card:nth-child(1)::before { background: var(--gradient-blue); }
+.stat-card:nth-child(2)::before { background: var(--gradient-green); }
+.stat-card:nth-child(3)::before { background: var(--gradient-orange); }
+.stat-card:nth-child(4)::before { background: var(--gradient-purple); }
+.stat-card:active { transform: scale(0.96); }
+.stat-val { font-size: 30px; font-weight: 800; letter-spacing: -1px; margin-bottom: 4px; transition: color 0.3s; }
+.stat-lbl { font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--text-secondary); letter-spacing: 0.5px; }
+
+/* ─ Progress/Disk ─ */
+.disk-card {
+  margin: 16px; padding: 16px; background: var(--bg-secondary);
+  border-radius: 12px; border: 0.5px solid var(--card-border);
+}
+.disk-meta { display: flex; justify-content: space-between; margin-bottom: 10px; font-size: 13px; font-weight: 600; }
+.progress-track { height: 6px; background: var(--bg-tertiary); border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; border-radius: 3px; background: var(--gradient-blue); transition: width 0.6s cubic-bezier(0.25, 1, 0.5, 1); }
+.progress-fill.warn { background: var(--gradient-orange); }
+
+/* ─ Buttons ─ */
+.btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; padding: 14px; border-radius: 12px;
+  border: none; cursor: pointer; font-size: 17px; font-weight: 600;
+  transition: opacity 0.15s, transform 0.2s cubic-bezier(0.25, 1, 0.5, 1), box-shadow 0.2s;
+  -webkit-tap-highlight-color: transparent;
+  position: relative; overflow: hidden;
+}
+.btn:active { opacity: 0.8; transform: scale(0.97); }
+.btn-primary { background: var(--blue); color: #fff; box-shadow: 0 4px 14px rgba(10, 132, 255, 0.25); }
+.btn-primary:active { box-shadow: 0 2px 6px rgba(10, 132, 255, 0.12); }
+.btn-secondary { background: var(--bg-tertiary); color: var(--blue); }
+.btn-danger { background: rgba(255, 69, 58, 0.12); color: var(--red); }
+.btn-sm { padding: 8px 16px; font-size: 15px; width: auto; border-radius: 8px; }
+
+/* ─ Tab Bar ─ */
+#tabbar {
+  height: var(--tab-height);
+  padding-bottom: var(--safe-bottom);
+  background: rgba(16, 16, 16, 0.88);
+  backdrop-filter: blur(30px) saturate(200%);
+  -webkit-backdrop-filter: blur(30px) saturate(200%);
+  border-top: 0.5px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+}
+.tab {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  color: var(--text-tertiary); transition: color 0.25s ease, transform 0.2s;
+  background: none; border: none; cursor: pointer;
+}
+.tab:active { transform: scale(0.88); }
+.tab.active { color: var(--blue); }
+.tab svg { width: 24px; height: 24px; margin-bottom: 4px; transition: transform 0.25s cubic-bezier(0.25, 1, 0.5, 1); }
+.tab.active svg { transform: scale(1.12); }
+.tab-label { font-size: 10px; font-weight: 500; transition: font-weight 0.2s; }
+.tab.active .tab-label { font-weight: 700; }
+
+/* ─ Inputs ─ */
+.input-field {
+  width: 100%; background: transparent; border: none;
+  padding: 12px 16px; font-size: 17px; color: var(--text);
+  outline: none; font-family: var(--font);
+}
+.input-field::placeholder { color: var(--text-tertiary); }
+
+/* ─ iOS Remove Button ─ */
+.remove-btn {
+  background: rgba(255, 69, 58, 0.12); color: var(--red);
+  border: none; padding: 6px 14px;
+  border-radius: 8px; font-weight: 600; font-size: 14px;
+  cursor: pointer; transition: opacity 0.2s, background 0.2s;
+  -webkit-tap-highlight-color: transparent;
+}
+.remove-btn:active { opacity: 0.7; background: rgba(255, 69, 58, 0.25); }
+
+/* ─ Banner ─ */
+@keyframes bannerSlideIn {
+  from { opacity: 0; transform: translateY(-10px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.banner {
+  margin: 16px; padding: 14px 16px; background: rgba(48, 209, 88, 0.15);
+  border-radius: 14px; display: none; align-items: center; gap: 14px;
+}
+.banner.show { display: flex; animation: bannerSlideIn 0.4s cubic-bezier(0.25, 1, 0.5, 1) both; }
+.dot { width: 10px; height: 10px; background: var(--green); border-radius: 50%; animation: pulse 1.5s infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.85); } }
+
+/* ─ Empty State ─ */
+@keyframes emptyFadeIn { from { opacity: 0; transform: scale(0.92); } to { opacity: 1; transform: scale(1); } }
+.empty-state { padding: 60px 20px; text-align: center; color: var(--text-secondary); animation: emptyFadeIn 0.5s ease-out; }
+.empty-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
+
+/* ─ Utils ─ */
+.c-blue { color: var(--blue); }
+.c-green { color: var(--green); }
+.c-orange { color: var(--orange); }
+.c-purple { color: var(--purple); }
+.mt16 { margin-top: 16px; }
+.mb24 { margin-bottom: 24px; }
+
+.ios-switch { position: relative; width: 51px; height: 31px; flex-shrink: 0; user-select: none; -webkit-tap-highlight-color: transparent; }
+.ios-switch input { opacity: 0; width: 0; height: 0; }
+.ios-switch span {
+  position: absolute; inset: 0; background: #39393d;
+  border-radius: 16px; transition: .2s; cursor: pointer;
+}
+.ios-switch span::before {
+  content: ""; position: absolute; height: 27px; width: 27px;
+  left: 2px; bottom: 2px; background: white;
+  border-radius: 50%; transition: .2s;
+  box-shadow: 0 3px 8px rgba(0,0,0,0.15);
+}
+.ios-switch input:checked + span { background: #30d158; }
+.ios-switch input:checked + span::before { transform: translateX(20px); }
+
+/* ── Premium Splash Screen ── */
+@keyframes splashGlowPulse {
+  0% { transform: scale(0.95); opacity: 0.4; }
+  50% { transform: scale(1.05); opacity: 0.7; }
+  100% { transform: scale(0.95); opacity: 0.4; }
+}
+@keyframes splashTextSlide {
+  0% { transform: translateY(30px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+@keyframes spin {
+  100% { transform: rotate(360deg); }
+}
+@keyframes modalSlideIn {
+  0% { transform: scale(0.9) translateY(20px); opacity: 0; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+/* ── Premium Forms ── */
+.auth-container {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(28, 28, 30, 0.7);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  padding: 24px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);
+  margin-top: 10px;
+}
+.auth-tabs {
+  display: flex;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 4px;
+  border-radius: 12px;
+  margin-bottom: 20px;
+}
+.auth-tab {
+  flex: 1;
+  padding: 10px 8px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.2s ease;
+  background: transparent;
+  border: none;
+}
+.auth-tab.active {
+  background: var(--blue);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 198, 251, 0.3);
+}
+.form-group {
+  margin-bottom: 14px;
+  text-align: left;
+}
+.form-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+  display: block;
+}
+.auth-input {
+  width: 100%;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  color: #fff;
+  font-size: 14px;
+  outline: none;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+}
+.auth-input:focus {
+  border-color: var(--blue);
+  background: rgba(255, 255, 255, 0.08);
+}
+.auth-btn {
+  width: 100%;
+  padding: 12px;
+  background: linear-gradient(135deg, var(--blue), var(--pink));
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+  margin-top: 10px;
+}
+.auth-btn:active {
+  transform: scale(0.98);
+}
+.google-btn {
+  width: 100%;
+  padding: 11px;
+  background: #fff;
+  color: #1a1a1a;
+  font-size: 14px;
+  font-weight: 700;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transition: transform 0.15s ease;
+}
+.google-btn:active {
+  transform: scale(0.98);
+}
+.google-icon {
+  width: 18px;
+  height: 18px;
+}
+</style>
+</head>
+<body>
+
+<!-- ── Beautiful Pulsing Splash Screen ── -->
+<div id="splash-screen" style="position:fixed; inset:0; background:linear-gradient(135deg, #14121F 0%, #0D0B14 100%); z-index:99999; display:flex; flex-direction:column; align-items:center; justify-content:center; transition:opacity 0.5s ease-in-out, visibility 0.5s; opacity:1; visibility:visible;">
+  <div style="position:relative; width:100px; height:100px; margin-bottom:20px;">
+    <div style="position:absolute; inset:0; background:rgba(0, 198, 251, 0.35); border-radius:50%; filter:blur(15px); animation:splashGlowPulse 2s infinite ease-in-out;"></div>
+    <img id="splash-logo-img" src="/logo.jpg" style="width:100px; height:100px; border-radius:50%; border:2.5px solid var(--blue); box-shadow:0 8px 24px rgba(0,198,251,0.25); object-fit:cover; z-index:2; position:relative;" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'%2300c6fb\'><path d=\'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z\'/></svg>'">
+  </div>
+  <h1 style="font-family:'Outfit', sans-serif; font-size:28px; font-weight:800; background:linear-gradient(45deg, var(--blue), var(--pink)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; margin:0 0 4px 0; letter-spacing:0.5px; animation:splashTextSlide 0.8s cubic-bezier(0.19, 1, 0.22, 1) forwards;">Cuhi</h1>
+  <div style="margin-top:32px; width:24px; height:24px; border:2.5px solid rgba(255,255,255,0.1); border-top-color:var(--blue); border-radius:50%; animation:spin 0.8s linear infinite;"></div>
+</div>
+
+<!-- ── Tabbed Login Gate ── -->
+<div id="gate" style="display:none; position:fixed; inset:0; background:linear-gradient(135deg, #14121F 0%, #0D0B14 100%); z-index:9999; flex-direction:column; align-items:center; justify-content:flex-start; padding:24px 24px 60px 24px; text-align:center; overflow-y:auto; box-sizing:border-box;-webkit-overflow-scrolling:touch;">
+  <div style="display:flex; flex-direction:column; align-items:center; width:100%; max-width:360px; margin:auto 0;">
+    <div style="width:68px; height:68px; border-radius:50%; border:2px solid var(--blue); overflow:hidden; margin-bottom:14px; box-shadow:0 4px 16px rgba(0,198,251,0.25); background:#000;">
+      <img src="/logo.jpg" style="width:100%; height:100%; object-fit:cover;" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'%2300c6fb\'><path d=\'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z\'/></svg>'">
+    </div>
+    <h1 style="font-family:'Outfit', sans-serif; font-size:22px; font-weight:800; margin:0 0 4px 0; color:#fff;">Welcome to Cuhi</h1>
+    <p style="font-size:12px; color:rgba(255,255,255,0.4); margin:0 0 16px 0;">Sign in to access your media downloads</p>
+
+    <!-- Server Connection URL -->
+    <div style="width:100%; margin-bottom:10px; text-align:left;">
+      <input type="url" id="login-url" class="auth-input" placeholder="Server URL (https://...)" style="text-align:center;">
+    </div>
+
+    <!-- Main Container -->
+    <div class="auth-container">
+      <div class="auth-tabs">
+        <button class="auth-tab active" onclick="switchAuthTab('login')">Login</button>
+        <button class="auth-tab" onclick="switchAuthTab('register')">Register</button>
+        <button class="auth-tab" onclick="switchAuthTab('token')">Token</button>
+      </div>
+
+      <!-- Email Login Form -->
+      <div id="auth-login-view">
+        <div class="form-group">
+          <label class="form-label">Email Address</label>
+          <input type="email" id="auth-login-email" class="auth-input" placeholder="name@example.com">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" id="auth-login-password" class="auth-input" placeholder="••••••••">
+        </div>
+        <button class="auth-btn" onclick="submitLogin()">Log In</button>
+        
+        <div style="display:flex; align-items:center; margin:14px 0; color:rgba(255,255,255,0.25); font-size:11px;">
+          <div style="flex:1; height:1px; background:rgba(255,255,255,0.08);"></div>
+          <span style="padding:0 8px;">OR</span>
+          <div style="flex:1; height:1px; background:rgba(255,255,255,0.08);"></div>
+        </div>
+
+        <button class="google-btn" onclick="submitGoogleAuth()">
+          <svg class="google-icon" viewBox="0 0 24 24">
+            <path fill="#EA4335" d="M12.24 10.285V14.4h6.887c-.648 2.41-2.519 4.114-5.136 4.114-3.232 0-5.852-2.618-5.852-5.85s2.62-5.85 5.852-5.85c1.47 0 2.809.544 3.842 1.436L20.89 5.37C18.667 3.3 15.688 2 12.24 2 6.6 2 2 6.6 2 12.24s4.6 10.24 10.24 10.24c5.795 0 10.254-4.074 10.254-10.24 0-.693-.08-1.36-.226-1.955H12.24Z"/>
+          </svg>
+          Sign in with Google
+        </button>
+      </div>
+
+      <!-- Email Registration Form -->
+      <div id="auth-register-view" style="display:none;">
+        <div class="form-group">
+          <label class="form-label">First Name</label>
+          <input type="text" id="auth-reg-name" class="auth-input" placeholder="Your Name">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Email Address</label>
+          <input type="email" id="auth-reg-email" class="auth-input" placeholder="name@example.com">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Password</label>
+          <input type="password" id="auth-reg-password" class="auth-input" placeholder="Min. 6 characters">
+        </div>
+        <button class="auth-btn" onclick="submitRegister()">Create Account</button>
+      </div>
+
+      <!-- Telegram Token Login Form -->
+      <div id="auth-token-view" style="display:none;">
+        <div class="form-group">
+          <label class="form-label">App Token</label>
+          <input type="text" id="login-token" class="auth-input" placeholder="UID:HMAC (from bot /app)">
+        </div>
+        <button class="auth-btn" onclick="submitTokenLogin()">Verify Token</button>
+        <p style="color:rgba(255,255,255,0.4); font-size:11px; margin-top:12px; line-height:1.4;">Send <code style="background:rgba(255,255,255,0.06); padding:2px 4px; border-radius:4px; font-family:monospace;">/app</code> to the Telegram bot to fetch your secure connection token.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Google Account Chooser Modal ── -->
+<div id="google-chooser-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); z-index:10000; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
+  <div style="background:#1e1e1e; border:1px solid rgba(255,255,255,0.08); width:100%; max-width:340px; border-radius:24px; padding:24px; box-shadow:0 12px 40px rgba(0,0,0,0.5); text-align:left; box-sizing:border-box; animation: modalSlideIn 0.3s cubic-bezier(0.19, 1, 0.22, 1);">
+    <div style="display:flex; justify-content:center; margin-bottom:16px;">
+      <svg width="24" height="24" viewBox="0 0 24 24">
+        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.85z"/>
+        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.85c.87-2.6 3.3-4.53 6.16-4.53z"/>
+      </svg>
+    </div>
+    <h2 style="font-family:'Outfit', sans-serif; font-size:20px; font-weight:700; color:#fff; margin:0 0 4px 0; text-align:center;">Choose an account</h2>
+    <p style="font-size:13px; color:rgba(255,255,255,0.4); margin:0 0 20px 0; text-align:center;">to continue to <span style="color:var(--blue); font-weight:600;">Cuhi</span></p>
+    <div id="google-accounts-list" style="display:flex; flex-direction:column; gap:8px; margin-bottom:16px;"></div>
+    <div id="google-add-account-group" style="display:none; margin-bottom:16px;">
+      <div style="font-size:11px; color:var(--blue); font-weight:700; text-transform:uppercase; margin-bottom:6px; letter-spacing:0.5px;">Enter Google Email</div>
+      <input type="email" id="google-custom-email" class="auth-input" placeholder="example@gmail.com" style="margin-bottom:10px;">
+      <div style="display:flex; gap:8px;">
+        <button class="auth-btn" style="flex:1; padding:8px 12px; font-size:13px;" onclick="confirmAddGoogleAccount()">Continue</button>
+        <button class="google-btn" style="flex:1; margin:0; padding:8px 12px; font-size:13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08);" onclick="cancelAddGoogleAccount()">Cancel</button>
+      </div>
+    </div>
+    <div style="font-size:11px; color:rgba(255,255,255,0.3); line-height:1.4; text-align:center; border-top:1px solid rgba(255,255,255,0.06); padding-top:14px;">
+      To continue, Google will share your name, email address, and profile picture with Cuhi.
+    </div>
+    <button class="google-btn" style="margin:14px 0 0 0; width:100%; font-size:13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); height:38px; display:flex; align-items:center; justify-content:center;" onclick="closeGoogleChooser()">
+      Cancel
+    </button>
+  </div>
+</div>
+
+<div id="app">
+  <div id="pages">
+
+    <!-- HOME -->
+    <div class="page active" id="page-home">
+      <div class="nav-bar">
+        <div class="nav-title">Cuhi</div>
+      </div>
+
+      <!-- Account Card -->
+      <div class="list-group" style="margin-top:16px;">
+        <div class="cell chevron" onclick="navTo('account')">
+          <div id="home-avatar" style="width:40px; height:40px; border-radius:50%; background:var(--gradient-blue); display:flex; align-items:center; justify-content:center; font-size:18px; margin-right:14px; flex-shrink:0; overflow:hidden;">
+            <span class="emoji">👤</span>
+          </div>
+          <div class="cell-body">
+            <div class="cell-label" id="account-name" style="font-weight:600;">User</div>
+            <div class="cell-sub" id="account-id">Tap to view profile</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="banner" id="active-download-banner" style="border-radius:12px;">
+        <div class="dot"></div>
+        <div style="flex:1;">
+          <div style="font-size:15px; font-weight:600; color:var(--green);">Download in Progress</div>
+          <div style="font-size:13px; color:var(--text-secondary);">System is active in background</div>
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="stopDownload()">Stop</button>
+      </div>
+
+      <div class="stat-cards">
+        <div class="stat-card">
+          <div class="stat-lbl">Sources</div>
+          <div class="stat-val c-blue" id="stat-sources">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-lbl">Files Sent</div>
+          <div class="stat-val c-green" id="stat-sent">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-lbl">Data Used</div>
+          <div class="stat-val c-orange" id="stat-mb">0 MB</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-lbl">History</div>
+          <div class="stat-val c-purple" id="stat-hist">0</div>
+        </div>
+      </div>
+
+      <div class="sec-title">Disk Storage</div>
+      <div class="disk-card">
+        <div class="disk-meta">
+          <span id="disk-label">System Storage</span>
+          <span id="disk-percent" class="c-blue">0%</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill" id="disk-bar" style="width:0%"></div>
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-top:8px; font-size:12px; color:var(--text-secondary);">
+          <span id="disk-used">0 GB used</span>
+          <span id="disk-free">0 GB free</span>
+        </div>
+      </div>
+
+      <div class="sec-title">Quick Settings</div>
+      <div class="list-group">
+        <div class="cell chevron" onclick="navTo('settings')">
+          <div class="cell-icon" style="background:var(--blue);"><span class="emoji">📡</span></div>
+          <div class="cell-body">
+            <div class="cell-label">Output Channel</div>
+            <div class="cell-sub" id="home-channel">Not configured</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SOURCES -->
+    <div class="page" id="page-sources">
+      <div class="nav-bar">
+        <div class="nav-title">Sources</div>
+      </div>
+      <div class="nav-large-title" id="sources-count">0 Profiles</div>
+
+      <div class="sec-title">Add New Source</div>
+      <div class="list-group">
+        <div class="cell" style="padding: 0;">
+          <select id="add-platform" class="input-field" style="width: 120px; background: var(--bg-tertiary); margin: 8px; border-radius: 8px; height: 36px; padding: 0 10px; font-size: 15px;">
+            <option value="instagram">Instagram</option>
+            <option value="tiktok">TikTok</option>
+            <option value="facebook">Facebook</option>
+            <option value="x">X / Twitter</option>
+          </select>
+          <input type="url" id="source-url" class="input-field" placeholder="https://..." style="flex:1;">
+          <button class="btn btn-primary btn-sm" onclick="addSource()" style="margin: 8px;">Add</button>
+        </div>
+      </div>
+
+      <div class="sec-title">Manage Sources</div>
+      <div class="list-group" id="sources-list-container">
+        <!-- Sources rendered here -->
+      </div>
+    </div>
+
+    <!-- DOWNLOAD -->
+    <div class="page" id="page-download">
+      <div class="nav-bar">
+        <div class="nav-title">Download</div>
+      </div>
+
+      <div class="sec-title">Media Selection</div>
+      <div class="list-group">
+        <div class="cell">
+          <div class="cell-body">
+            <div class="cell-label">Download Type</div>
+          </div>
+          <select id="dl-media-type" class="input-field" style="width: auto; text-align: right; color: var(--blue); font-weight: 500;">
+            <option value="all">Photos & Videos</option>
+            <option value="photos">Photos Only</option>
+            <option value="videos">Videos Only</option>
+            <option value="files">Files (Documents)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="sec-title">Options</div>
+      <div class="list-group">
+        <div class="cell">
+          <div class="cell-icon" style="background:var(--orange);">📖</div>
+          <div class="cell-body"><div class="cell-label">Include Stories</div></div>
+          <label class="ios-switch"><input type="checkbox" id="dl-stories"><span></span></label>
+        </div>
+        <div class="cell">
+          <div class="cell-icon" style="background:var(--purple);">✨</div>
+          <div class="cell-body"><div class="cell-label">Include Highlights</div></div>
+          <label class="ios-switch"><input type="checkbox" id="dl-highlights"><span></span></label>
+        </div>
+        <div class="cell">
+          <div class="cell-icon" style="background:var(--red);">🔄</div>
+          <div class="cell-body">
+            <div class="cell-label">Force Refresh</div>
+            <div class="cell-sub">Bypass archive, re-download all</div>
+          </div>
+          <label class="ios-switch"><input type="checkbox" id="dl-force"><span></span></label>
+        </div>
+      </div>
+
+      <div style="padding: 24px 16px;">
+        <div id="dl-status-info" style="text-align:center; font-size:14px; color:var(--text-secondary); margin-bottom:16px;">System Ready</div>
+        <button class="btn btn-primary" id="btn-start-dl" onclick="startDownload()">Start Download</button>
+        <button class="btn btn-danger" id="btn-stop-dl" onclick="stopDownload()" style="display:none;">Stop Process</button>
+      </div>
+    </div>
+
+    <!-- HISTORY -->
+    <div class="page" id="page-history">
+      <div class="nav-bar">
+        <div class="nav-title">History</div>
+      </div>
+      <div class="nav-large-title" id="history-count">Recent Activity</div>
+      <div class="list-group mt16" id="history-container">
+        <!-- History rendered here -->
+      </div>
+      <div style="padding:16px;">
+        <button class="btn btn-danger" id="btn-clear-history" onclick="clearHistory()" style="display:none;">Clear All History</button>
+      </div>
+    </div>
+
+    <!-- ACCOUNT -->
+    <div class="page" id="page-account">
+      <div class="nav-bar">
+        <div class="nav-title">Account</div>
+      </div>
+      <div style="display:flex; flex-direction:column; align-items:center; padding:32px 16px 8px;">
+        <div id="profile-photo" style="width:88px; height:88px; border-radius:50%; background:var(--gradient-blue); display:flex; align-items:center; justify-content:center; font-size:36px; overflow:hidden; border:3px solid var(--blue); box-shadow:0 4px 20px rgba(10,132,255,0.25);">
+          <span class="emoji">👤</span>
+        </div>
+        <div id="profile-name" style="font-size:24px; font-weight:700; margin-top:16px; letter-spacing:-0.3px;">User</div>
+        <div id="profile-username" style="font-size:16px; color:var(--blue); margin-top:4px; font-weight:500;">@username</div>
+      </div>
+
+      <div class="sec-title">Info</div>
+      <div class="list-group">
+        <div class="cell">
+          <div class="cell-body"><div class="cell-label">Telegram ID</div></div>
+          <div class="cell-right" id="profile-tid" style="font-family:monospace; font-size:14px; color:var(--text-secondary);">—</div>
+        </div>
+        <div class="cell">
+          <div class="cell-body"><div class="cell-label">Language</div></div>
+          <div class="cell-right" id="profile-lang" style="color:var(--text-secondary);">—</div>
+        </div>
+        <div class="cell">
+          <div class="cell-body"><div class="cell-label">Premium</div></div>
+          <div class="cell-right" id="profile-premium" style="color:var(--text-secondary);">No</div>
+        </div>
+      </div>
+
+      <div style="padding:24px 16px;">
+        <button class="btn btn-secondary" onclick="navTo('home')"><span class="emoji" style="margin-right:6px;">←</span> Back to Home</button>
+      </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="page" id="page-settings">
+      <div class="nav-bar">
+        <div class="nav-title">Settings</div>
+      </div>
+
+      <div class="sec-title">Appearance</div>
+      <div class="list-group">
+        <div class="cell">
+          <div class="cell-icon" style="background:var(--purple);">🎨</div>
+          <div class="cell-body"><div class="cell-label">Theme</div></div>
+          <select id="set-theme" class="input-field" onchange="setTheme(this.value)" style="width:auto; text-align:right; color:var(--blue); font-weight:600; padding-right:4px;">
+            <option value="auto">Auto</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
+      </div>
+      <div class="sec-footer">Auto follows your Telegram theme.</div>
+
+      <div id="bot-only-settings" style="display:none;">
+        <div class="sec-title">Output Configuration</div>
+        <div class="list-group">
+          <div class="cell" style="padding: 4px 0;">
+            <input type="text" id="set-channel-id" class="input-field" placeholder="@channel or -100...">
+            <button class="btn btn-primary btn-sm" onclick="saveChannel()" style="margin: 8px;">Save</button>
+          </div>
+        </div>
+        <div class="sec-footer">Forwarded media will be sent to this channel.</div>
+
+        <div class="sec-title">Automation</div>
+        <div class="list-group">
+          <div class="cell" style="padding: 4px 0;">
+            <input type="text" id="set-cron" class="input-field" placeholder="0 9 * * *">
+            <button class="btn btn-primary btn-sm" onclick="saveSchedule()" style="margin: 8px;">Set</button>
+          </div>
+        </div>
+        <div class="sec-footer">Use Cron format (e.g., daily at 9 AM).</div>
+      </div>
+
+      <div class="sec-title">Cookie Management</div>
+      <div class="list-group" id="settings-cookie-status">
+        <!-- Cookie status here -->
+      </div>
+
+      <div class="list-group mt16">
+        <div class="cell" style="flex-direction:column; align-items:stretch; padding:16px;">
+          <select id="cookie-platform" class="input-field" style="background:var(--bg-tertiary); border-radius:10px; margin-bottom:12px;">
+            <option value="instagram">Instagram</option>
+            <option value="tiktok">TikTok</option>
+            <option value="facebook">Facebook</option>
+            <option value="x">X / Twitter</option>
+          </select>
+          <textarea id="cookie-data" class="input-field" placeholder="Paste Netscape cookie content here..." style="background:var(--bg-tertiary); border-radius:10px; min-height:120px; font-size:13px; font-family:monospace; padding:12px;"></textarea>
+          <div style="display:flex; gap:12px; margin-top:12px;">
+            <button class="btn btn-primary btn-sm" style="flex:1" onclick="uploadCookie()">Upload</button>
+            <button class="btn btn-danger btn-sm" style="flex:1" onclick="deleteCookie()">Delete</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Tab Bar -->
+  <nav id="tabbar">
+    <button class="tab active" onclick="navTo('home')" data-tab="home">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+      <div class="tab-label">Home</div>
+    </button>
+    <button class="tab" onclick="navTo('sources')" data-tab="sources">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+      <div class="tab-label">Sources</div>
+    </button>
+    <button class="tab" onclick="navTo('download')" data-tab="download">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      <div class="tab-label">Download</div>
+    </button>
+    <button class="tab" onclick="navTo('history')" data-tab="history">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      <div class="tab-label">History</div>
+    </button>
+    <button class="tab" onclick="navTo('settings')" data-tab="settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      <div class="tab-label">Settings</div>
+    </button>
+  </nav>
+</div>
+
+<div id="toast" style="position:fixed; bottom:100px; left:50%; transform:translateX(-50%) translateY(20px) scale(0.92); background:rgba(30,30,30,0.92); backdrop-filter:blur(20px) saturate(180%); padding:12px 28px; border-radius:100px; color:#fff; font-size:15px; font-weight:600; opacity:0; pointer-events:none; z-index:9999; border:0.5px solid rgba(255,255,255,0.1); box-shadow: 0 8px 32px rgba(0,0,0,0.3); letter-spacing: -0.2px;"></div>
+
+<script>
+const tg = (window.Telegram && window.Telegram.WebApp);
+let activePage = 'home';
+
+// Visibility API to save battery/server
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    stopAllPolling();
+  } else if (activePage === 'home') {
+    startHomePolling();
+  }
+});
+
+if (tg) {
+  tg.ready();
+  tg.expand();
+  try { 
+    tg.setHeaderColor('secondary_bg_color'); 
+    tg.setBackgroundColor('bg_color'); 
+  } catch(e){}
+}
+
+let INIT_DATA = (tg && tg.initData) || '';
+let API_BASE = window.location.origin;
+
+const isNativeApp = (
+  (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
+  window.location.hostname === 'localhost' ||
+  !(tg && tg.initData)
+);
+
+if (isNativeApp) {
+  const savedToken = localStorage.getItem('cuhi_app_token');
+  const savedApiUrl = localStorage.getItem('cuhi_api_url');
+  if (savedToken && savedApiUrl) {
+    INIT_DATA = savedToken;
+    API_BASE = savedApiUrl;
+  }
+}
+
+// Global controllers for Splash & Auth Tabs
+function hideSplash() {
+  const splash = document.getElementById('splash-screen');
+  if (splash) {
+    splash.style.opacity = '0';
+    splash.style.pointerEvents = 'none';
+    setTimeout(() => {
+      splash.style.display = 'none';
+    }, 500);
+  }
+}
+
+function showLoginGate() {
+  hideSplash();
+  document.getElementById('gate').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+}
+
+function switchAuthTab(tab) {
+  const tabs = document.querySelectorAll('.auth-tab');
+  tabs.forEach(t => t.classList.remove('active'));
+  
+  document.getElementById('auth-login-view').style.display = 'none';
+  document.getElementById('auth-register-view').style.display = 'none';
+  document.getElementById('auth-token-view').style.display = 'none';
+  
+  if (tab === 'login') {
+    if (tabs[0]) tabs[0].classList.add('active');
+    document.getElementById('auth-login-view').style.display = 'block';
+  } else if (tab === 'register') {
+    if (tabs[1]) tabs[1].classList.add('active');
+    document.getElementById('auth-register-view').style.display = 'block';
+  } else if (tab === 'token') {
+    if (tabs[2]) tabs[2].classList.add('active');
+    document.getElementById('auth-token-view').style.display = 'block';
+  }
+}
+
+// Prefill Server URL and handle Splash Screen
+window.addEventListener('DOMContentLoaded', () => {
+  const savedApiUrl = localStorage.getItem('cuhi_api_url');
+  if (savedApiUrl) {
+    const urlField = document.getElementById('login-url');
+    if (urlField) urlField.value = savedApiUrl;
+  }
+  
+  // Set correct logo in splash screen
+  const splashLogo = document.getElementById('splash-logo-img');
+  if (splashLogo && savedApiUrl) {
+    splashLogo.src = savedApiUrl + '/logo.jpg';
+  }
+
+  // Premium Delayed Transition for Opening Pulse Animation
+  setTimeout(async () => {
+    try {
+      if (INIT_DATA) {
+        // Test auth by hitting stats endpoint
+        await callApi('GET', '/api/stats');
+        hideSplash();
+      } else {
+        showLoginGate();
+      }
+    } catch(err) {
+      console.warn('Auth validation failed, loading login gate:', err);
+      showLoginGate();
+    }
+  }, 1800);
+});
+
+async function submitLogin() {
+  const url = document.getElementById('login-url').value.trim();
+  const email = document.getElementById('auth-login-email').value.trim();
+  const password = document.getElementById('auth-login-password').value;
+  if (!url || !email || !password) return showToast('⚠️ All fields are required');
+  
+  try {
+    const formattedUrl = url.replace(/\/$/, '');
+    const res = await fetch(formattedUrl + '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({detail: 'Invalid credentials'}));
+      throw new Error(err.detail || 'Login failed');
+    }
+    const data = await res.json();
+    localStorage.setItem('cuhi_api_url', formattedUrl);
+    localStorage.setItem('cuhi_app_token', data.token);
+    showToast('✅ Logged in successfully');
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('success'));
+    setTimeout(() => window.location.reload(), 800);
+  } catch(e) {
+    showToast('❌ ' + e.message);
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('error'));
+  }
+}
+
+async function submitRegister() {
+  const url = document.getElementById('login-url').value.trim();
+  const name = document.getElementById('auth-reg-name').value.trim();
+  const email = document.getElementById('auth-reg-email').value.trim();
+  const password = document.getElementById('auth-reg-password').value;
+  if (!url || !email || !password) return showToast('⚠️ Email and password are required');
+  
+  try {
+    const formattedUrl = url.replace(/\/$/, '');
+    const res = await fetch(formattedUrl + '/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, first_name: name || undefined })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({detail: 'Registration failed'}));
+      throw new Error(err.detail || 'Registration failed');
+    }
+    const data = await res.json();
+    localStorage.setItem('cuhi_api_url', formattedUrl);
+    localStorage.setItem('cuhi_app_token', data.token);
+    showToast('✅ Account registered successfully');
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('success'));
+    setTimeout(() => window.location.reload(), 800);
+  } catch(e) {
+    showToast('❌ ' + e.message);
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('error'));
+  }
+}
+
+function submitGoogleAuth() {
+  const url = document.getElementById('login-url').value.trim();
+  if (!url) return showToast('⚠️ Please enter the Server URL first');
+  
+  const modal = document.getElementById('google-chooser-modal');
+  modal.style.display = 'flex';
+  
+  let accounts = [];
+  try {
+    accounts = JSON.parse(localStorage.getItem('cuhi_google_accounts') || '[]');
+  } catch(e) {}
+  
+  if (accounts.length === 0) {
+    accounts = [
+      { email: 'nahid.hassan@gmail.com', name: 'Nahid Hassan', avatar: '' }
+    ];
+  }
+  
+  const list = document.getElementById('google-accounts-list');
+  let html = '';
+  
+  accounts.forEach((acc, idx) => {
+    html += `
+      <div onclick="selectGoogleAccount('${acc.email}', '${acc.name}')" style="display:flex; align-items:center; padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.04); border-radius:14px; cursor:pointer; transition:all 0.2s ease;">
+        <div style="width:36px; height:36px; border-radius:50%; margin-right:12px; overflow:hidden; background:var(--gradient-blue); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:14px; flex-shrink:0;">
+          ${acc.avatar ? `<img src="${acc.avatar}" style="width:100%; height:100%; object-fit:cover;" onerror="this.style.display='none'; this.parentElement.innerHTML='${acc.name.charAt(0).toUpperCase()}'">` : acc.name.charAt(0).toUpperCase()}
+        </div>
+        <div style="flex:1; overflow:hidden;">
+          <div style="font-size:14px; font-weight:600; color:#fff; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; text-align:left;">${acc.name}</div>
+          <div style="font-size:11px; color:rgba(255,255,255,0.4); text-overflow:ellipsis; overflow:hidden; white-space:nowrap; text-align:left;">${acc.email}</div>
+        </div>
+      </div>
+    `;
+  });
+  
+  html += `
+    <div onclick="showAddGoogleAccount()" style="display:flex; align-items:center; padding:12px; background:transparent; border:1px dashed rgba(255,255,255,0.15); border-radius:14px; cursor:pointer; transition:all 0.2s ease;">
+      <div style="width:36px; height:36px; border-radius:50%; margin-right:12px; border:1px solid rgba(255,255,255,0.15); display:flex; align-items:center; justify-content:center; color:#fff; font-size:18px; flex-shrink:0; background:rgba(255,255,255,0.02);">
+        +
+      </div>
+      <div style="font-size:14px; font-weight:600; color:var(--blue); text-align:left;">Use another account</div>
+    </div>
+  `;
+  
+  list.innerHTML = html;
+  list.style.display = 'flex';
+  document.getElementById('google-add-account-group').style.display = 'none';
+}
+
+async function selectGoogleAccount(email, name) {
+  closeGoogleChooser();
+  const url = document.getElementById('login-url').value.trim();
+  if (!url) return;
+  const googleId = "g_" + Math.random().toString(36).substr(2, 9);
+  
+  try {
+    showToast('Connecting Google account...');
+    const formattedUrl = url.replace(/\/$/, '');
+    const res = await fetch(formattedUrl + '/api/auth/google', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, name, google_id: googleId })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({detail: 'Google auth failed'}));
+      throw new Error(err.detail || 'Google sign-in failed');
+    }
+    const data = await res.json();
+    
+    let accounts = [];
+    try {
+      accounts = JSON.parse(localStorage.getItem('cuhi_google_accounts') || '[]');
+    } catch(e) {}
+    accounts = accounts.filter(acc => acc.email !== email);
+    accounts.unshift({ email, name, avatar: '' });
+    localStorage.setItem('cuhi_google_accounts', JSON.stringify(accounts));
+    
+    localStorage.setItem('cuhi_api_url', formattedUrl);
+    localStorage.setItem('cuhi_app_token', data.token);
+    showToast('✅ Google Authentication successful');
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('success'));
+    setTimeout(() => window.location.reload(), 800);
+  } catch(e) {
+    showToast('❌ ' + e.message);
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('error'));
+  }
+}
+
+function showAddGoogleAccount() {
+  document.getElementById('google-accounts-list').style.display = 'none';
+  document.getElementById('google-add-account-group').style.display = 'block';
+}
+
+function cancelAddGoogleAccount() {
+  document.getElementById('google-accounts-list').style.display = 'flex';
+  document.getElementById('google-add-account-group').style.display = 'none';
+}
+
+function confirmAddGoogleAccount() {
+  const email = document.getElementById('google-custom-email').value.trim();
+  if (!email || !email.includes('@')) {
+    return showToast('⚠️ Please enter a valid email address');
+  }
+  const name = email.split('@')[0];
+  selectGoogleAccount(email, name);
+}
+
+function closeGoogleChooser() {
+  document.getElementById('google-chooser-modal').style.display = 'none';
+}
+
+async function submitTokenLogin() {
+  const url = document.getElementById('login-url').value.trim();
+  const token = document.getElementById('login-token').value.trim();
+  if (!url || !token) return showToast('⚠️ Both Server URL and App Token are required');
+  
+  localStorage.setItem('cuhi_api_url', url.replace(/\/$/, ''));
+  localStorage.setItem('cuhi_app_token', token);
+  showToast('✅ Mobile token configured successfully');
+  (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('success'));
+  setTimeout(() => window.location.reload(), 800);
+}
+
+function logoutApp() {
+  if (confirm("Are you sure you want to log out of Cuhi?")) {
+    localStorage.removeItem('cuhi_app_token');
+    localStorage.removeItem('cuhi_api_url');
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('warning'));
+    window.location.reload();
+  }
+}
+
+// ── Theme System ────────────────────────────────────────────────────────
+function detectTelegramTheme() {
+  const cs = (tg && tg.colorScheme);
+  if (cs === 'light') return 'light';
+  return 'dark';
+}
+
+function applyTheme(mode) {
+  document.body.classList.remove('theme-light');
+  if (mode === 'light') {
+    document.body.classList.add('theme-light');
+  } else if (mode === 'auto') {
+    if (detectTelegramTheme() === 'light') document.body.classList.add('theme-light');
+  }
+}
+
+function setTheme(mode) {
+  localStorage.setItem('cuhi-theme', mode);
+  applyTheme(mode);
+  showToast(mode === 'auto' ? 'Theme: Auto' : mode === 'light' ? 'Theme: Light' : 'Theme: Dark');
+  (tg && tg.HapticFeedback && tg.HapticFeedback.selectionChanged());
+}
+
+// Initialize theme on load
+(function initTheme() {
+  const saved = localStorage.getItem('cuhi-theme') || 'auto';
+  applyTheme(saved);
+  const sel = document.getElementById('set-theme');
+  if (sel) sel.value = saved;
+})();
+
+// Populate account from Telegram user data
+function populateAccount() {
+  const u = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user);
+  if (!u) return;
+  const fullName = [u.first_name, u.last_name].filter(Boolean).join(' ');
+  document.getElementById('account-name').textContent = fullName || 'User';
+  document.getElementById('account-id').textContent = u.username ? '@' + u.username : 'Tap to view profile';
+  document.getElementById('profile-name').textContent = fullName || 'User';
+  document.getElementById('profile-username').textContent = u.username ? '@' + u.username : '';
+  document.getElementById('profile-tid').textContent = u.id || '—';
+  document.getElementById('profile-lang').textContent = (u.language_code || '—').toUpperCase();
+  document.getElementById('profile-premium').textContent = u.is_premium ? 'Yes' : 'No';
+  if (u.photo_url) {
+    const img = document.createElement('img');
+    img.src = u.photo_url;
+    img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+    img.onerror = () => img.remove();
+    document.getElementById('profile-photo').innerHTML = '';
+    document.getElementById('profile-photo').appendChild(img);
+    const homeAvatar = document.getElementById('home-avatar');
+    const hImg = img.cloneNode();
+    hImg.onerror = () => hImg.remove();
+    homeAvatar.innerHTML = '';
+    homeAvatar.appendChild(hImg);
+  }
+}
+populateAccount();
+
+async function callApi(method, path, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (INIT_DATA) {
+    if (INIT_DATA.startsWith("Bearer ") || (INIT_DATA.length > 30 && !INIT_DATA.includes(":") && !INIT_DATA.includes("hash="))) {
+      headers['Authorization'] = INIT_DATA.startsWith("Bearer ") ? INIT_DATA : `Bearer ${INIT_DATA}`;
+    } else {
+      headers['X-Init-Data'] = INIT_DATA;
+    }
+  }
+  const res = await fetch(API_BASE + path, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({detail: 'System Error'}));
+    throw new Error(err.detail || `Error ${res.status}`);
+  }
+  return res.json();
+}
+
+let toastTmr;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.style.transition = 'none';
+  el.style.opacity = '0';
+  el.style.transform = 'translateX(-50%) translateY(20px) scale(0.92)';
+  void el.offsetWidth;
+  el.style.transition = 'opacity 0.3s, transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)';
+  el.style.opacity = '1';
+  el.style.transform = 'translateX(-50%) translateY(0) scale(1)';
+  clearTimeout(toastTmr);
+  toastTmr = setTimeout(() => {
+    el.style.transition = 'opacity 0.25s ease, transform 0.25s ease';
+    el.style.opacity = '0';
+    el.style.transform = 'translateX(-50%) translateY(12px) scale(0.95)';
+  }, 2500);
+}
+
+function navTo(page) {
+  if (page === activePage) return;
+  
+  const oldPageEl = document.getElementById('page-' + activePage);
+  const newPageEl = document.getElementById('page-' + page);
+  
+  // Reset scroll position on new page
+  newPageEl.scrollTop = 0;
+  
+  oldPageEl.classList.add('exit');
+  newPageEl.classList.remove('exit');
+  
+  void newPageEl.offsetWidth;
+  
+  newPageEl.classList.add('active');
+  
+  setTimeout(() => {
+    oldPageEl.classList.remove('active', 'exit');
+  }, 400);
+
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  const tabEl = document.querySelector(`[data-tab="${page}"]`);
+  if (tabEl) tabEl.classList.add('active');
+  
+  activePage = page;
+  stopAllPolling();
+  if (page === 'home') startHomePolling();
+  if (page === 'sources') loadSources();
+  if (page === 'history') loadHistory();
+  if (page === 'settings') loadSettings();
+  if (page === 'account') populateAccount();
+  
+  (tg && tg.HapticFeedback && tg.HapticFeedback.selectionChanged());
+}
+
+function getPlatformBadge(p) {
+  const colors = { instagram: '#e1306c', tiktok: '#000000', facebook: '#1877f2', x: '#000000' };
+  const color = colors[p] || '#8e8e93';
+  return `<span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:${color}; margin-right:6px;"></span>`;
+}
+
+// ── Polling Logic ────────────────────────────────────────────────────
+let homePollTmr;
+function stopAllPolling() {
+  clearInterval(homePollTmr);
+}
+
+// Animated number counter
+function animateValue(el, start, end, suffix) {
+  if (start === end) return;
+  const duration = 500;
+  const startTime = performance.now();
+  function tick(now) {
+    const elapsed = now - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    const eased = 1 - Math.pow(1 - progress, 3);
+    const current = Math.round(start + (end - start) * eased);
+    el.textContent = current + (suffix || '');
+    if (progress < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+async function updateHomeStats() {
+  try {
+    const [stats, disk] = await Promise.all([
+      callApi('GET', '/api/stats'),
+      callApi('GET', '/api/disk')
+    ]);
+    
+    const srcEl = document.getElementById('stat-sources');
+    const sentEl = document.getElementById('stat-sent');
+    const mbEl = document.getElementById('stat-mb');
+    const histEl = document.getElementById('stat-hist');
+    
+    const oldSrc = parseInt(srcEl.textContent) || 0;
+    const oldSent = parseInt(sentEl.textContent) || 0;
+    const oldHist = parseInt(histEl.textContent) || 0;
+    
+    animateValue(srcEl, oldSrc, stats.sources);
+    animateValue(sentEl, oldSent, stats.files_sent);
+    animateValue(histEl, oldHist, stats.history_count);
+    
+    mbEl.textContent = (stats.downloaded_mb >= 1024) ? (stats.downloaded_mb / 1024).toFixed(2) + ' GB' : stats.downloaded_mb + ' MB';
+    
+    // Account card
+    const acctName = document.getElementById('account-name');
+    const acctId = document.getElementById('account-id');
+    if (stats.username) {
+      acctName.textContent = stats.name || stats.username;
+      acctId.textContent = '@' + stats.username;
+    }
+    
+    document.getElementById('home-channel').textContent = stats.channel || 'Not configured';
+    
+    document.getElementById('active-download-banner').classList.toggle('show', stats.download_running);
+    document.getElementById('btn-start-dl').style.display = stats.download_running ? 'none' : 'flex';
+    document.getElementById('btn-stop-dl').style.display = stats.download_running ? 'flex' : 'none';
+    document.getElementById('dl-status-info').textContent = stats.download_running ? 'Download in progress...' : 'System Ready';
+
+    // Disk
+    document.getElementById('disk-percent').textContent = disk.percent_used + '%';
+    document.getElementById('disk-bar').style.width = disk.percent_used + '%';
+    document.getElementById('disk-bar').classList.toggle('warn', disk.percent_used > 85);
+    document.getElementById('disk-used').textContent = disk.used_gb + ' GB used';
+    document.getElementById('disk-free').textContent = disk.free_gb + ' GB free';
+    
+  } catch(e) { console.error('Poll error', e); }
+  
+  if (isNativeApp) {
+    syncNativeFiles();
+  }
+}
+
+let isSyncing = false;
+let _syncPollTmr = null;
+
+// ── Capacitor 6 Filesystem helper ────────────────────────────────────
+function getCapFilesystem() {
+  // Capacitor 6+ native: window.Capacitor.Plugins.Filesystem
+  if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem) {
+    const FS = window.Capacitor.Plugins.Filesystem;
+    // Directory enum values for Capacitor 6
+    const Dir = { Documents: 'DOCUMENTS', External: 'EXTERNAL', ExternalStorage: 'EXTERNAL_STORAGE' };
+    return { Filesystem: FS, Directory: Dir };
+  }
+  // Capacitor 3/4 fallback
+  if (window.CapacitorFilesystem && window.CapacitorFilesystem.Filesystem) {
+    return window.CapacitorFilesystem;
+  }
+  return null;
+}
+
+// Request storage permission — called at startup AND before every sync
+async function requestStoragePermission() {
+  if (!window.Capacitor || !window.Capacitor.isNativePlatform || !window.Capacitor.isNativePlatform()) return true;
+  
+  // Proactively request Filesystem permission if needed
+  const cap = getCapFilesystem();
+  if (cap) {
+    try {
+      const status = await cap.Filesystem.checkPermissions();
+      if (status && status.publicStorage !== 'granted') {
+        await cap.Filesystem.requestPermissions();
+      }
+    } catch(e) {
+      console.error('Filesystem permission check/request failed', e);
+    }
+  }
+
+  // Proactively request Media permission if available
+  const Media = window.Capacitor.Plugins && window.Capacitor.Plugins.Media;
+  if (Media) {
+    try {
+      let status = await Media.checkPermissions();
+      const isGranted = (s) => s === 'granted';
+      
+      // On Android 13+ (API 33+), check photos/videos permissions. On older, check publicStorage.
+      const hasPerm = status && (isGranted(status.publicStorage) || isGranted(status.photos) || isGranted(status.videos));
+      if (!hasPerm) {
+        await Media.requestPermissions();
+      }
+    } catch(e) {
+      console.error('Media permission check/request failed', e);
+    }
+  }
+
+  // ALWAYS return true to prevent false-positive permission blocks on Android 11+ Scoped Storage.
+  // Filesystem writes to scoped Documents/CuhiBot folders will work natively, and Media writes are wrapped in safe try/catch.
+  return true;
+}
+
+// Called once at app boot to request permission proactively
+async function initNativePermission() {
+  if (!window.Capacitor || !window.Capacitor.isNativePlatform || !window.Capacitor.isNativePlatform()) return;
+  const granted = await requestStoragePermission();
+  if (!granted) {
+    showToast('⚠️ Storage & Media permissions needed to save to gallery');
+  }
+}
+
+async function syncNativeFiles() {
+  // Only run inside the native Capacitor Android/iOS container
+  if (!window.Capacitor || !window.Capacitor.isNativePlatform || !window.Capacitor.isNativePlatform()) return;
+  const cap = getCapFilesystem();
+  if (!cap) {
+    console.error('Capacitor Filesystem not available');
+    return;
+  }
+  if (isSyncing) return;
+  isSyncing = true;
+
+  try {
+    // Always re-check permission (handles case where user granted it manually)
+    const granted = await requestStoragePermission();
+    if (!granted) {
+      document.getElementById('dl-status-info').textContent = '⚠️ Storage permission denied — enable in Settings.';
+      return;
+    }
+
+    const { Filesystem, Directory } = cap;
+    const files = await callApi('GET', '/api/files');
+
+    if (!files || files.length === 0) return;
+
+    document.getElementById('dl-status-info').textContent = 'Saving ' + files.length + ' file(s) to phone...';
+
+    let saved = 0;
+    for (const file of files) {
+      try {
+        const downloadUrl = API_BASE + '/api/files/' + file.path.split('/').map(encodeURIComponent).join('/');
+
+        const resp = await fetch(downloadUrl, {
+          headers: { 'X-Init-Data': INIT_DATA }
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+
+        // Convert to base64 in chunks to avoid btoa stack overflow on large files
+        const arrayBuf = await resp.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuf);
+        let binary = '';
+        const CHUNK = 8192;
+        for (let i = 0; i < bytes.byteLength; i += CHUNK) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+        }
+        const base64 = btoa(binary);
+
+        const localPath = 'CuhiBot/' + file.path;
+        await Filesystem.writeFile({
+          path: localPath,
+          data: base64,
+          directory: Directory.Documents,
+          recursive: true
+        });
+
+        // ── Save to device Gallery/Photos ─────────────────────────────────────
+        try {
+          const Media = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Media;
+          if (Media) {
+            const ext = file.path.split('.').pop().toLowerCase();
+            let mime = 'image/jpeg';
+            let isVid = false;
+            if (['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp'].includes(ext)) {
+              mime = 'video/' + (ext === 'mov' ? 'quicktime' : ext);
+              isVid = true;
+            } else if (ext === 'png') {
+              mime = 'image/png';
+            } else if (ext === 'gif') {
+              mime = 'image/gif';
+            } else if (ext === 'webp') {
+              mime = 'image/webp';
+            }
+            const dataUri = `data:${mime};base64,${base64}`;
+
+            // Find or create album 'CuhiBot'
+            let albumId = null;
+            try {
+              const { albums } = await Media.getAlbums();
+              const existing = albums.find(a => a.name.toLowerCase() === 'cuhibot');
+              if (existing) {
+                albumId = existing.identifier;
+              } else {
+                await Media.createAlbum({ name: 'CuhiBot' });
+                const { albums: newAlbums } = await Media.getAlbums();
+                const created = newAlbums.find(a => a.name.toLowerCase() === 'cuhibot');
+                if (created) albumId = created.identifier;
+              }
+            } catch(albumErr) {
+              console.error('Error with album setup', albumErr);
+            }
+
+            const fileNameNoExt = file.path.split('/').pop().replace(/\.[^/.]+$/, "");
+            const saveOpts = {
+              path: dataUri,
+              fileName: fileNameNoExt
+            };
+            if (albumId) {
+              saveOpts.albumIdentifier = albumId;
+            }
+
+            if (isVid) {
+              await Media.saveVideo(saveOpts);
+            } else {
+              await Media.savePhoto(saveOpts);
+            }
+            console.log('Successfully saved to device Gallery:', file.path);
+          }
+        } catch(mediaErr) {
+          console.error('Failed to save to device gallery:', file.path, mediaErr);
+        }
+
+        // Remove from server only after confirmed local write
+        await callApi('DELETE', '/api/files/' + file.path.split('/').map(encodeURIComponent).join('/'));
+        saved++;
+
+      } catch(err) {
+        console.error('Failed to sync file', file.path, err);
+      }
+    }
+
+    if (saved > 0) {
+      showToast('✅ ' + saved + ' file(s) saved to phone');
+      document.getElementById('dl-status-info').textContent = 'Saved ' + saved + ' file(s) → Documents/CuhiBot';
+    }
+  } catch(e) {
+    console.error('Sync loop error', e);
+  } finally {
+    isSyncing = false;
+  }
+}
+
+// Poll for server-side files after download starts (runs for up to 3 min)
+function startSyncPolling() {
+  if (_syncPollTmr) return;
+  let attempts = 0;
+  const MAX_ATTEMPTS = 45; // 45 × 4s = 3 minutes
+  _syncPollTmr = setInterval(async () => {
+    attempts++;
+    await syncNativeFiles();
+    if (attempts >= MAX_ATTEMPTS) {
+      clearInterval(_syncPollTmr);
+      _syncPollTmr = null;
+    }
+  }, 4000);
+}
+
+function stopSyncPolling() {
+  if (_syncPollTmr) {
+    clearInterval(_syncPollTmr);
+    _syncPollTmr = null;
+  }
+}
+
+function startHomePolling() {
+  updateHomeStats();
+  homePollTmr = setInterval(updateHomeStats, 3000);
+}
+
+// ── Pull-to-Refresh ───────────────────────────────────────────────────
+function addPullToRefresh(pageEl, onRefresh) {
+  let startY = 0;
+  let pulling = false;
+  let indicator = null;
+
+  function getOrCreateIndicator() {
+    let el = pageEl.querySelector('.ptr-indicator');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'ptr-indicator';
+      el.style.cssText = [
+        'position:sticky', 'top:0', 'left:0', 'right:0', 'height:0',
+        'display:flex', 'align-items:center', 'justify-content:center',
+        'overflow:hidden', 'transition:height 0.2s ease',
+        'background:var(--bg)', 'z-index:50', 'font-size:13px',
+        'color:var(--text-secondary)', 'font-weight:600', 'gap:8px'
+      ].join(';');
+      el.innerHTML = '<span style="display:inline-block;animation:spin 0.8s linear infinite">↻</span> Refreshing...';
+      pageEl.insertBefore(el, pageEl.firstChild);
+    }
+    return el;
+  }
+
+  pageEl.addEventListener('touchstart', (e) => {
+    if (pageEl.scrollTop === 0) {
+      startY = e.touches[0].clientY;
+      pulling = true;
+    }
+  }, { passive: true });
+
+  pageEl.addEventListener('touchmove', (e) => {
+    if (!pulling) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy > 0 && pageEl.scrollTop === 0) {
+      indicator = getOrCreateIndicator();
+      const h = Math.min(dy * 0.4, 56);
+      indicator.style.height = h + 'px';
+    }
+  }, { passive: true });
+
+  pageEl.addEventListener('touchend', async () => {
+    if (!pulling) return;
+    pulling = false;
+    if (!indicator) return;
+    const triggered = parseInt(indicator.style.height) > 40;
+    indicator.style.height = triggered ? '44px' : '0';
+    if (triggered) {
+      try { await onRefresh(); } catch(e) {}
+    }
+    setTimeout(() => { if (indicator) indicator.style.height = '0'; }, 600);
+  }, { passive: true });
+}
+
+// Attach PTR to all pages
+(function initPullToRefresh() {
+  addPullToRefresh(document.getElementById('page-home'), () => updateHomeStats());
+  addPullToRefresh(document.getElementById('page-sources'), () => loadSources());
+  addPullToRefresh(document.getElementById('page-history'), () => loadHistory());
+  addPullToRefresh(document.getElementById('page-settings'), () => loadSettings());
+})();
+
+// ── Actions ──────────────────────────────────────────────────────────
+async function loadSources() {
+  const container = document.getElementById('sources-list-container');
+  try {
+    const sources = await callApi('GET', '/api/sources');
+    document.getElementById('sources-count').textContent = `${sources.length} Profile${sources.length === 1 ? '' : 's'}`;
+    if (sources.length === 0) {
+      container.innerHTML = '<div class="empty-state"><div class="empty-icon">🔗</div><div>No sources added yet</div></div>';
+      return;
+    }
+    container.innerHTML = sources.map(s => `
+      <div class="cell">
+        <div class="cell-body" style="padding-right: 12px;">
+          <div class="cell-label" style="font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight: 500;">${s.url}</div>
+          <div class="cell-sub" style="display:flex; align-items:center;">${getPlatformBadge(s.platform)}${(s.platform || 'unknown').charAt(0).toUpperCase() + (s.platform || 'unknown').slice(1)}</div>
+        </div>
+        <button class="remove-btn" onclick="deleteSource('${s.platform}', '${encodeURIComponent(s.url)}')">Remove</button>
+      </div>
+    `).join('');
+  } catch(e) { showToast(e.message); }
+}
+
+async function addSource() {
+  const url = document.getElementById('source-url').value.trim();
+  const platform = document.getElementById('add-platform').value;
+  if (!url) return showToast('Enter a URL');
+  try {
+    await callApi('POST', '/api/sources', { url, platform });
+    document.getElementById('source-url').value = '';
+    showToast('Source added');
+    loadSources();
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('success'));
+  } catch(e) { showToast(e.message); }
+}
+
+async function deleteSource(platform, url) {
+  try {
+    await callApi('DELETE', `/api/sources/${platform}/${url}`);
+    showToast('Source Removed');
+    loadSources();
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('warning'));
+  } catch(e) { showToast(e.message); }
+}
+
+async function startDownload() {
+  try {
+    // On native: ensure permission before starting anything
+    if (isNativeApp) {
+      const granted = await requestStoragePermission();
+      if (!granted) {
+        showToast('⚠️ Storage permission required');
+        return;
+      }
+    }
+    await callApi('POST', '/api/download', {
+      media_type: document.getElementById('dl-media-type').value,
+      stories: document.getElementById('dl-stories').checked,
+      highlights: document.getElementById('dl-highlights').checked,
+      force: document.getElementById('dl-force').checked,
+      client: isNativeApp ? 'android' : 'telegram'
+    });
+    showToast('Download started');
+    updateHomeStats();
+    // On native: begin polling server for completed files
+    if (isNativeApp) {
+      startSyncPolling();
+    }
+    (tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred('medium'));
+  } catch(e) { showToast(e.message); }
+}
+
+async function stopDownload() {
+  try {
+    await callApi('POST', '/api/download/stop');
+    showToast('Stop signal sent');
+    stopSyncPolling();
+    updateHomeStats();
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('warning'));
+  } catch(e) { showToast(e.message); }
+}
+
+async function loadHistory() {
+  const container = document.getElementById('history-container');
+  const clearBtn = document.getElementById('btn-clear-history');
+  try {
+    const history = await callApi('GET', '/api/history?limit=50');
+    document.getElementById('history-count').textContent = `${history.length} Entries`;
+    clearBtn.style.display = history.length > 0 ? 'flex' : 'none';
+    if (history.length === 0) {
+      container.innerHTML = '<div class="empty-state"><div class="empty-icon"><span class="emoji">\ud83d\udcdc</span></div><div>No history available</div></div>';
+      return;
+    }
+    container.innerHTML = history.map(h => `
+      <div class="cell">
+        <div class="cell-body">
+          <div class="cell-label" style="font-size:16px; font-weight:500;">${h.source || 'Unknown'}</div>
+          <div class="cell-sub">${(h.platform || 'unknown').charAt(0).toUpperCase() + (h.platform || 'unknown').slice(1)} • <span style="color:var(--green)">${h.sent || 0} files</span> • ${h.date || ''}</div>
+        </div>
+      </div>
+    `).join('');
+  } catch(e) { showToast(e.message); }
+}
+
+async function clearHistory() {
+  try {
+    await callApi('DELETE', '/api/history');
+    showToast('History cleared');
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('success'));
+    loadHistory();
+  } catch(e) { showToast(e.message); }
+}
+
+async function loadSettings() {
+  try {
+    if (isNativeApp) {
+      const cookies = await callApi('GET', '/api/cookies');
+      const container = document.getElementById('settings-cookie-status');
+      container.innerHTML = cookies.map(c => `
+        <div class="cell">
+          <div class="cell-body"><div class="cell-label" style="font-weight:500;">${(c.platform || 'unknown').charAt(0).toUpperCase() + (c.platform || 'unknown').slice(1)}</div></div>
+          <div class="cell-right" style="color:${c.has_cookie ? 'var(--green)' : 'var(--red)'}; font-size:13px; font-weight:700; padding:4px 8px; background:var(--bg-tertiary); border-radius:6px;">
+            ${c.has_cookie ? 'ACTIVE' : 'MISSING'}
+          </div>
+        </div>
+      `).join('');
+      const botSettings = document.getElementById('bot-only-settings');
+      if (botSettings) botSettings.style.display = 'none';
+      return;
+    }
+    
+    const botSettings = document.getElementById('bot-only-settings');
+    if (botSettings) botSettings.style.display = 'block';
+
+    const [ch, sched, cookies] = await Promise.all([
+      callApi('GET', '/api/channel'),
+      callApi('GET', '/api/schedule'),
+      callApi('GET', '/api/cookies')
+    ]);
+    document.getElementById('set-channel-id').value = ch.channel_id || '';
+    document.getElementById('set-cron').value = sched.cron || '';
+    
+    const container = document.getElementById('settings-cookie-status');
+    container.innerHTML = cookies.map(c => `
+      <div class="cell">
+        <div class="cell-body"><div class="cell-label" style="font-weight:500;">${(c.platform || 'unknown').charAt(0).toUpperCase() + (c.platform || 'unknown').slice(1)}</div></div>
+        <div class="cell-right" style="color:${c.has_cookie ? 'var(--green)' : 'var(--red)'}; font-size:13px; font-weight:700; padding:4px 8px; background:var(--bg-tertiary); border-radius:6px;">
+          ${c.has_cookie ? 'ACTIVE' : 'MISSING'}
+        </div>
+      </div>
+    `).join('');
+  } catch(e) { showToast(e.message); }
+}
+
+async function saveChannel() {
+  const channel_id = document.getElementById('set-channel-id').value.trim();
+  try {
+    await callApi('POST', '/api/channel', { channel_id });
+    showToast('Channel updated');
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('success'));
+  } catch(e) { showToast(e.message); }
+}
+
+async function saveSchedule() {
+  const cron = document.getElementById('set-cron').value.trim();
+  try {
+    await callApi('POST', '/api/schedule', { cron, enabled: !!cron });
+    showToast(cron ? 'Schedule set' : 'Schedule cleared');
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('success'));
+  } catch(e) { showToast(e.message); }
+}
+
+async function uploadCookie() {
+  const platform = document.getElementById('cookie-platform').value;
+  const cookie_data = document.getElementById('cookie-data').value.trim();
+  if (!cookie_data) return showToast('Paste cookie data');
+  try {
+    await callApi('POST', '/api/cookies', { platform, cookie_data });
+    document.getElementById('cookie-data').value = '';
+    showToast(`${platform} cookie saved`);
+    loadSettings();
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('success'));
+  } catch(e) { showToast(e.message); }
+}
+
+async function deleteCookie() {
+  const platform = document.getElementById('cookie-platform').value;
+  try {
+    await callApi('DELETE', `/api/cookies/${platform}`);
+    showToast(`${platform} cookie deleted`);
+    loadSettings();
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('warning'));
+  } catch(e) { showToast(e.message); }
+}
+
+// Boot
+if (isNativeApp) initNativePermission();
+startHomePolling();
+
+// Inject PTR spinner CSS
+(function injectPtrCss() {
+  const s = document.createElement('style');
+  s.textContent = '@keyframes spin { to { transform: rotate(360deg); } }';
+  document.head.appendChild(s);
+})();
+
+// Re-check permission when app regains focus (user may have granted it in Settings)
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && isNativeApp) {
+    syncNativeFiles();
+  }
+});
+</script>
+</body>
+</html>
