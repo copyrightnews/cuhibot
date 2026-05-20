@@ -127,14 +127,14 @@ def start_mini_app_server():
     if os.environ.get("SKIP_EMBEDDED_SERVER") == "1":
         logger.info("SKIP_EMBEDDED_SERVER is set to 1 — skipping embedded FastAPI server thread")
         return
-    if not MINI_APP_URL:
-        logger.warning("PUBLIC_DOMAIN not set — Mini App skipped")
-        return
     try:
         port = int(os.environ.get("PORT", 8080))
         t = threading.Thread(target=_server_module.start, args=(port,), daemon=True)
         t.start()
-        logger.info("Mini App server started → %s", MINI_APP_URL)
+        if MINI_APP_URL:
+            logger.info("Mini App server started → %s (port %d)", MINI_APP_URL, port)
+        else:
+            logger.warning("PUBLIC_DOMAIN not set — Mini App server started on port %d but URL is empty", port)
     except Exception as e:
         logger.error("Mini App server failed to start: %s", e)
 
@@ -159,10 +159,10 @@ COOKIE_ENV_MAP: dict[str, str] = {
 }
 
 PLATFORM_DOMAINS: dict[str, tuple[str, ...]] = {
-    "instagram": ("instagram.com",),
-    "tiktok": ("tiktok.com",),
-    "facebook": ("facebook.com", "fb.com", "m.facebook.com"),
-    "x": ("x.com", "twitter.com"),
+    "instagram": ("instagram.com", "ddinstagram.com"),
+    "tiktok": ("tiktok.com", "vm.tiktok.com", "vt.tiktok.com"),
+    "facebook": ("facebook.com", "fb.com", "m.facebook.com", "fb.watch"),
+    "x": ("x.com", "twitter.com", "fixupx.com", "fxtwitter.com"),
 }
 
 PLATFORM_URL_HINTS: dict[str, str] = {
@@ -212,6 +212,7 @@ _TASKS: set[asyncio.Task] = set()   # prevent GC of fire-and-forget tasks
 # starts (raises DeprecationWarning in Py3.10+, RuntimeError in Py3.12+).
 # It is created lazily inside _combined_post_init() instead.
 MINIAPP_QUEUE: asyncio.Queue | None = None
+_SCHEDULE_CACHE: dict[int, tuple[str | None, str | None]] = {}
 
 
 # =============================================================================
@@ -652,6 +653,18 @@ def normalize_chat(value) -> int | str:
 
 def handle_from_url(url: str) -> str:
     """Extract username/handle from a profile URL, stripping query strings first."""
+    try:
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(url)
+        netloc = parsed.netloc.lower()
+        if "facebook.com" in netloc or "fb.com" in netloc:
+            if parsed.path.rstrip("/").endswith("profile.php"):
+                qs = parse_qs(parsed.query)
+                if "id" in qs and qs["id"]:
+                    return qs["id"][0]
+    except Exception:
+        pass
+
     clean = url.split("?")[0].split("#")[0].rstrip("/")
     path_parts = clean.split("/")
     if not path_parts:
@@ -1247,30 +1260,41 @@ async def realtime_download(
                         pass
                 break
             
-            # [FIXED] Non-blocking directory scan
+            # [FIXED] Non-blocking batch directory scan to optimize sleeps
             if await asyncio.to_thread(out_dir.exists):
                 files = await asyncio.to_thread(lambda: list(out_dir.iterdir()))
+                candidates = []
                 for f in sorted(files):
                     if f in seen or not f.is_file() or f.suffix.lower() not in exts:
                         continue
                     if f.name.endswith(('.part', '.ytdl', '.tmp')):
                         continue
-                    try:
-                        s1 = await asyncio.to_thread(lambda _f=f: _f.stat().st_size)
-                        await asyncio.sleep(0.5)
-                        # Re-check seen after sleep to prevent race with _read_stdout
-                        if f in seen:
+                    candidates.append(f)
+                
+                if candidates:
+                    initial_sizes = {}
+                    for f in candidates:
+                        try:
+                            initial_sizes[f] = await asyncio.to_thread(lambda _f=f: _f.stat().st_size)
+                        except (OSError, FileNotFoundError):
+                            pass
+                    
+                    await asyncio.sleep(0.5)
+                    
+                    for f in candidates:
+                        if f in seen or f not in initial_sizes:
                             continue
-                        s2 = await asyncio.to_thread(lambda _f=f: _f.stat().st_size)
-                        if s1 == s2:
-                            seen.add(f)
-                            buffer.append(f)
-                            downloaded_bytes += s1
-                            await add_downloaded_bytes(uid, s1)
-                            if len(buffer) >= MEDIA_GROUP_MAX:
-                                await drain()
-                    except (OSError, FileNotFoundError):
-                        continue
+                        try:
+                            s2 = await asyncio.to_thread(lambda _f=f: _f.stat().st_size)
+                            if initial_sizes[f] == s2:
+                                seen.add(f)
+                                buffer.append(f)
+                                downloaded_bytes += s2
+                                await add_downloaded_bytes(uid, s2)
+                                if len(buffer) >= MEDIA_GROUP_MAX:
+                                    await drain()
+                        except (OSError, FileNotFoundError):
+                            continue
 
             await asyncio.sleep(1.0)
             try:
@@ -2132,21 +2156,87 @@ async def _scheduled_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await asyncio.to_thread(wipe_downloads, uid)
 
 
+async def sync_user_schedule(app: Application, uid: int) -> None:
+    """Dynamically reschedule jobs for a user if settings changed."""
+    try:
+        s = await read_settings(uid)
+        job_name = f"schedule_{uid}"
+        
+        # Compute active / desired schedule configuration
+        desired_type = None  # None, "interval", or "cron"
+        desired_val = None
+        
+        interval_key = s.get("schedule", "off")
+        if interval_key != "off" and interval_key in SCHEDULE_OPTIONS:
+            desired_type = "interval"
+            desired_val = interval_key
+        elif s.get("schedule_enabled") and s.get("schedule_cron"):
+            desired_type = "cron"
+            desired_val = s.get("schedule_cron")
+            
+        global _SCHEDULE_CACHE
+        current_cache = _SCHEDULE_CACHE.get(uid)
+        desired_sig = (desired_type, desired_val)
+        
+        if current_cache == desired_sig:
+            return  # No change
+            
+        # Reschedule: cancel existing jobs first
+        active_jobs = app.job_queue.get_jobs_by_name(job_name) if app.job_queue else []
+        for job in active_jobs:
+            job.schedule_removal()
+            
+        if not app.job_queue:
+            return
+
+        if desired_type == "interval":
+            interval = SCHEDULE_OPTIONS[desired_val]
+            app.job_queue.run_repeating(
+                _scheduled_job,
+                interval=interval,
+                first=interval,
+                name=job_name,
+                data={
+                    "uid": uid,
+                    "chat_id": s.get("schedule_chat_id") or uid,
+                    "uname": s.get("schedule_uname", "user"),
+                    "name": s.get("schedule_name", "User")
+                }
+            )
+            logger.info("Interval schedule updated for user %s: %s", uid, desired_val)
+        elif desired_type == "cron":
+            fields = desired_val.strip().split()
+            if len(fields) == 5:
+                minute, hour, day, month, day_of_week = fields
+                app.job_queue.run_cron(
+                    _scheduled_job,
+                    minute=minute,
+                    hour=hour,
+                    day=day,
+                    month=month,
+                    day_of_week=day_of_week,
+                    name=job_name,
+                    data={
+                        "uid": uid,
+                        "chat_id": s.get("schedule_chat_id") or uid,
+                        "uname": s.get("schedule_uname", "user"),
+                        "name": s.get("schedule_name", "User")
+                    }
+                )
+                logger.info("Cron schedule updated for user %s: %s", uid, desired_val)
+                
+        _SCHEDULE_CACHE[uid] = desired_sig
+    except Exception as e:
+        logger.error("Error syncing schedule for user %s: %s", uid, e)
+
+
 async def _restore_schedules(app: Application) -> None:
     if not await asyncio.to_thread(DATA_ROOT.exists): return
     # [FIXED] Non-blocking startup scan for production scale
     for user_dir in await asyncio.to_thread(lambda: list(DATA_ROOT.iterdir())):
         if not user_dir.is_dir() or not user_dir.name.isdigit(): continue
         uid = int(user_dir.name)
-        try:
-            s = await read_settings(uid)
-            interval_key = s.get("schedule", "off")
-            if interval_key == "off" or interval_key not in SCHEDULE_OPTIONS: continue
-            chat_id = s.get("schedule_chat_id")
-            if not chat_id: continue
-            interval = SCHEDULE_OPTIONS[interval_key]
-            app.job_queue.run_repeating(_scheduled_job, interval=interval, first=interval, name=f"schedule_{uid}", data={"uid": uid, "chat_id": chat_id, "uname": s.get("schedule_uname", "user"), "name": s.get("schedule_name", "User")})
-        except Exception: pass
+        await sync_user_schedule(app, uid)
 
 
 async def _run_miniapp_download(
@@ -2301,11 +2391,13 @@ async def miniapp_queue_worker(bot) -> None:
             await asyncio.sleep(1)
 
 
-async def poll_miniapp_queue_loop() -> None:
+async def poll_miniapp_queue_loop(app: Application) -> None:
     """Async loop to scan for disk-based trigger and stop files every second.
     This works independently of python-telegram-bot's JobQueue and responds instantly.
+    Also periodically syncs active user schedules every 10 seconds.
     """
-    logger.info("Mini App file polling loop active")
+    logger.info("Mini App file polling and schedule sync loop active")
+    tick = 0
     while True:
         try:
             if MINIAPP_QUEUE is not None and DATA_ROOT.exists():
@@ -2330,8 +2422,17 @@ async def poll_miniapp_queue_loop() -> None:
                             logger.info("Local loop STOP triggered for uid=%s", uid)
                     except Exception:
                         continue
+
+                # ── Schedule Syncing (every 10 seconds) ──────────────────────
+                if tick % 10 == 0:
+                    for user_dir in await asyncio.to_thread(lambda: list(DATA_ROOT.iterdir())):
+                        if not user_dir.is_dir() or not user_dir.name.isdigit():
+                            continue
+                        uid = int(user_dir.name)
+                        await sync_user_schedule(app, uid)
         except Exception as e:
             logger.error("Error in poll_miniapp_queue_loop: %s", e)
+        tick += 1
         await asyncio.sleep(1)
 
 
@@ -2345,14 +2446,17 @@ async def _combined_post_init(application: Application) -> None:
     _TASKS.add(worker)
     worker.add_done_callback(_TASKS.discard)
 
-    loop_task = asyncio.create_task(poll_miniapp_queue_loop())
+    loop_task = asyncio.create_task(poll_miniapp_queue_loop(application))
     _TASKS.add(loop_task)
     loop_task.add_done_callback(_TASKS.discard)
 
 
 def main() -> None:
     if TOKEN == "YOUR_BOT_TOKEN": return
-    bootstrap_env_cookies()
+    try:
+        bootstrap_env_cookies()
+    except Exception as e:
+        logger.error("Failed to bootstrap cookies: %s", e)
     
     # Clear any stale download_running flags from previous crashes/shutdowns
     if DATA_ROOT.exists():

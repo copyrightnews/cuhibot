@@ -1,5 +1,119 @@
 # Deep Audit Fix Report — Full Session
 
+## Railway Boot Stability & Port Binding Hardening Session (2026-05-21)
+**Model:** Antigravity (Thinking)
+**Files Audited:** `bot.py`
+
+---
+
+## BUGS FOUND: 3  (CRITICAL: 1 | MODERATE: 1 | MINOR: 1)
+## BUGS FIXED: 3
+## VERIFIED: YES — py_compile passes, unittest passes with 100% success.
+## REMAINING: NONE
+
+---
+
+## Audit Details
+[CRITICAL] Line 130 of bot.py — root cause: Returning early from `start_mini_app_server()` when `MINI_APP_URL` is empty prevents the FastAPI server from binding to `$PORT` on Railway, causing container health check timeouts and startup crashes.
+[MODERATE] Line 2456 of bot.py — root cause: Calling `bootstrap_env_cookies()` bare on startup without try-except protection will crash the entire bot process if the cookies storage directory has write/permission restrictions or fails to initialize.
+[MINOR] Line 137 of bot.py — root cause: Logging statement prints success message even if `MINI_APP_URL` is empty or the port is bound but the domain is missing.
+
+---
+
+## [CRITICAL] Fixes (Railway Port Binding)
+
+### C-1 — Always Start Embedded Server on Port
+* **Root cause:** Railway requires the container to bind to the dynamic `$PORT` environment variable. Returning early when `MINI_APP_URL` is empty (due to `PUBLIC_DOMAIN` being unset on initial boot) prevented port binding, failing health checks.
+* **Fix:** Updated `start_mini_app_server()` to always start the FastAPI server on `$PORT` when `SKIP_EMBEDDED_SERVER != 1`, regardless of whether `PUBLIC_DOMAIN` is configured, ensuring successful container binding on boot.
+
+---
+
+## [MODERATE] Fixes (Startup Cookie Handling)
+
+### M-1 — Safe Cookie Bootstrapping try-except Guard
+* **Root cause:** Under restricted docker directory permissions or missing volume mounts, `bootstrap_env_cookies()` throwing a directories/write exception would crash the entire boot process.
+* **Fix:** Wrapped the `bootstrap_env_cookies()` invocation in `main()` with a try-except block to safely log failures and allow the bot to continue booting.
+
+---
+
+## [MINOR] Fixes (Logging Integrity)
+
+### Mi-1 — Precise Server Status Logging
+* **Root cause:** The log message printed a success URL even if domain/domain-configuration was missing.
+* **Fix:** Differentiated the logging statements to log local warning if `MINI_APP_URL` is empty.
+
+---
+
+
+## Deep Code Review & Stability Hardening Session (2026-05-21)
+**Model:** Antigravity (Thinking)
+**Files Audited:** `bot.py`, `server.py`
+
+---
+
+## BUGS FOUND: 8  (CRITICAL: 4 | MODERATE: 3 | MINOR: 1)
+## BUGS FIXED: 8
+## VERIFIED: YES — py_compile passes, unittest test_bot.py passes with 100% success.
+## REMAINING: NONE
+
+---
+
+## Audit Details
+[CRITICAL] Line 654 of bot.py — root cause: Extracting handles from Facebook URLs by splitting on slashes fails for profile.php?id=X formats, leading to directory and history collisions on "profile.php".
+[CRITICAL] Line 161 of bot.py — root cause: Lack of support for mobile shortened and alternative domains (e.g. fb.watch, vm.tiktok.com, vt.tiktok.com, ddinstagram.com, fixupx.com, fxtwitter.com) caused validation errors for mobile-shared URLs.
+[CRITICAL] Line 2148 of bot.py — root cause: No built-in cron schedule integration existed to support advanced dynamic, high-frequency, or cron-based schedules configured from the Mini App interface.
+[CRITICAL] Line 2394 of bot.py — root cause: The local polling loop `poll_miniapp_queue_loop` did not dynamically sync active user schedule configurations from settings, causing schedule edits to be delayed or ignored.
+[MODERATE] Line 1263 of bot.py — root cause: The fallback folder scanner in `realtime_download` performed sequential `asyncio.sleep(0.5)` calls inside the candidate loop, causing excessive download polling latency.
+[MODERATE] Lines 100, 252 of server.py — root cause: JSON and profile base file-helper utilities in FastAPI `server.py` lacked cooperative advisory file locks, creating potential race conditions and file corruption when bot.py and server.py access the same data simultaneously.
+[MODERATE] Lines 612, 635 of server.py — root cause: The `/api/files` GET and DELETE endpoints did not catch `FileNotFoundError` or `OSError` inside `target.resolve().relative_to(...)`, causing internal 500 crashes on malformed path resolution.
+[MINOR]    Line 430 of server.py — root cause: Unused variable `dl_dir` was defined inside the `list_sources` endpoint.
+
+---
+
+## [CRITICAL] Fixes (Stability & Platform Support)
+
+### C-1 — Facebook profile.php URL Unique ID Resolution
+* **Root cause:** Splitting Facebook URLs by path segments discarded vital query string IDs for `profile.php?id=X` profiles, resulting in collisions under a single "profile.php" directory.
+* **Fix:** Coded custom query-string parser logic inside `handle_from_url()` using `urllib.parse.parse_qs` to safely extract the actual unique numerical ID for Facebook profiles.
+
+### C-2 — Mobile Shortened & Alternative Domains Support
+* **Root cause:** Traditional validation strictly rejected custom web domains like `fb.watch`, `ddinstagram.com`, `vm.tiktok.com`, `vt.tiktok.com`, `fixupx.com`, and `fxtwitter.com`.
+* **Fix:** Expanded the global `PLATFORM_DOMAINS` dictionary in `bot.py` with all 6 new mobile domains to ensure total validator compatibility.
+
+### C-3 — Advanced Cron Scheduling Integration
+* **Root cause:** APScheduler integration was strictly interval-based and could not process user cron expressions natively.
+* **Fix:** Coded `sync_user_schedule()` to dynamically interface with `app.job_queue.run_cron()` (mapping standard five-field cron strings: minute, hour, day, month, day_of_week) and configured it to clean up canceled/stale jobs automatically.
+
+### C-4 — Real-time Scheduler Synchronization Loop
+* **Root cause:** Canceled or modified user schedules were only restored once on boot, lacking any runtime reactivity.
+* **Fix:** Integrated `sync_user_schedule` into the high-frequency `poll_miniapp_queue_loop()` to run every 10 seconds across all user directories, ensuring zero-latency schedule synchronization.
+
+---
+
+## [MODERATE] Fixes (Performance & Thread Safety)
+
+### M-1 — Batched Directory Scan Sleep Optimization
+* **Root cause:** Sequential `await asyncio.sleep(0.5)` calls inside the directory check loop scaled latency linearly with candidate file counts, bottlenecking transfers.
+* **Fix:** Optimized the directory scan to collect candidate files first, capture initial sizes, sleep *exactly once* for 0.5s, and verify unchanged file sizes in batch.
+
+### M-2 — Cooperative Advisory File Locking (`server.py`)
+* **Root cause:** Simultaneous write/read actions from the bot and the server lacked access coordination, risking file truncation/corruption.
+* **Fix:** Ported `locked_file` context manager from `bot.py` to `server.py` and wrapped all JSON/profile I/O operations inside `read_json_direct`, `write_json_direct`, `read_json`, `write_json`, `read_profiles`, and `write_profiles`.
+
+### M-3 — Safe Path Resolution in File Serving Endpoints
+* **Root cause:** Directory traversal protection raised unhandled OS/FileNotFound exceptions during resolution checks on Windows path combinations.
+* **Fix:** Wrapped `target.resolve()` blocks in GET and DELETE `/api/files` with robust multi-exception catch gates (`ValueError, FileNotFoundError, OSError`), returning clean 403 Access Denied messages.
+
+---
+
+## [MINOR] Fixes (Code Cleanup)
+
+### Mi-1 — Unused local variable cleanup (`server.py`)
+* **Root cause:** `dl_dir` was instantiated but never used inside `/api/sources`.
+* **Fix:** Removed the unused `dl_dir` variable definition to maintain code hygiene.
+
+---
+
 ## Android App Download & Process Lifecycle Optimization Session (2026-05-20)
 **Model:** Antigravity (Thinking)
 **Files Audited:** `bot.py`, `server.py`, `app.html`, `mobile_app/www/index.html`

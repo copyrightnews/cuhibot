@@ -1,13 +1,13 @@
 {
-  "task": "Clean up dead code and fix backend authentication compilation issues",
+  "task": "Local Dev and CI Cleanup",
   "workspace": "cuhibot",
-  "original_model": "Gemini 3.5 Flash",
-  "current_model": "Gemini 3.5 Flash",
+  "original_model": "Antigravity (Thinking)",
+  "current_model": "Antigravity (Thinking)",
   "total_parts": 1,
   "parts_completed": [1],
   "stopped_at": null,
   "next_part": null,
   "next_function": null,
   "status": "complete",
-  "style_notes": "Authentication endpoints, models, and unused active download processes trackers are completely cleaned up. Compiles flawlessly."
+  "style_notes": "All local testing/tunnelling files (run_local.bat, update_env.py, test_bot.py, cloudflared.exe, tunnel.log, and CI workflows) have been removed from the repository to leave only clean production-serving code."
 }

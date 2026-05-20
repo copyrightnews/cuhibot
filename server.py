@@ -97,19 +97,67 @@ log = logging.getLogger("cuhi.server")
 # ── Auth & Session Store ──────────────────────────────────────────────
 SESSIONS_FILE = DATA_ROOT / "sessions.json"
 
+from contextlib import contextmanager
+import time
+
+@contextmanager
+def locked_file(target: Path):
+    """Atomic advisory file lock using O_CREAT|O_EXCL.
+    Matches the locking mechanism of bot.py to prevent race conditions.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = target.with_suffix(target.suffix + ".lock")
+    fd = None
+    max_retries = 50
+    for attempt in range(max_retries):
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            try:
+                # Stale lock detection — wall-clock time to match st_mtime
+                age = time.time() - lock_path.stat().st_mtime
+                if age > 30:
+                    lock_path.unlink(missing_ok=True)
+                    continue
+            except OSError:
+                pass
+            if attempt == max_retries - 1:
+                raise TimeoutError(
+                    f"Could not acquire lock on {target} after {max_retries} retries")
+            time.sleep(0.01)
+    
+    if fd is None:
+        raise TimeoutError(
+            f"Could not acquire lock on {target} after {max_retries} retries")
+    try:
+        yield
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            lock_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def read_json_direct(path: Path, default=None):
     if default is None:
         default = {}
     try:
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
+        with locked_file(path):
+            if path.exists():
+                return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         pass
     return default
 
 def write_json_direct(path: Path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    with locked_file(path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 def get_sessions() -> dict:
     return read_json_direct(SESSIONS_FILE, default={})
@@ -205,28 +253,32 @@ def read_json(path: Path, default=None):
     if default is None:
         default = {}
     try:
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
+        with locked_file(path):
+            if path.exists():
+                return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         pass
     return default
 
 def write_json(path: Path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    with locked_file(path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 def read_profiles(uid: int, platform: str) -> list[str]:
     """Read profile URLs for a given platform."""
     p = user_dir(uid) / f"{platform}_profiles.txt"
-    if not p.exists():
-        return []
-    lines = [line.strip() for line in p.read_text(encoding="utf-8").splitlines()]
+    with locked_file(p):
+        if not p.exists():
+            return []
+        lines = [line.strip() for line in p.read_text(encoding="utf-8").splitlines()]
     return [line for line in lines if line and not line.startswith("#")]
 
 def write_profiles(uid: int, platform: str, urls: list[str]):
     p = user_dir(uid) / f"{platform}_profiles.txt"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text("\n".join(urls), encoding="utf-8")
+    with locked_file(p):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("\n".join(urls), encoding="utf-8")
 
 def count_downloaded_files(uid: int) -> int:
     """Count files in user download dirs."""
@@ -374,8 +426,6 @@ async def list_sources(uid: int = Depends(get_uid)):
     for plat in PLATFORMS:
         urls = read_profiles(uid, plat)
         for url in urls:
-            # Count files downloaded for this profile
-            dl_dir = user_dir(uid) / "downloads"
             result.append({"url": url, "platform": plat, "file_count": None})
     return result
 
@@ -567,7 +617,7 @@ async def get_file(file_path: str, uid: int = Depends(get_uid)):
     # Security: prevent directory traversal
     try:
         target.resolve().relative_to(dl_dir.resolve())
-    except ValueError:
+    except (ValueError, FileNotFoundError, OSError):
         raise HTTPException(403, "Access denied")
         
     if not target.exists() or not target.is_file():
@@ -589,7 +639,7 @@ async def delete_file(file_path: str, uid: int = Depends(get_uid)):
     
     try:
         target.resolve().relative_to(dl_dir.resolve())
-    except ValueError:
+    except (ValueError, FileNotFoundError, OSError):
         raise HTTPException(403, "Access denied")
         
     if target.exists() and target.is_file():
