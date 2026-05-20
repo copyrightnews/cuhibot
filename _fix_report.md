@@ -1,5 +1,50 @@
 # Deep Audit Fix Report — Full Session
 
+## Android App Download & Process Lifecycle Optimization Session (2026-05-20)
+**Model:** Antigravity (Thinking)
+**Files Audited:** `bot.py`, `server.py`, `app.html`, `mobile_app/www/index.html`
+
+---
+
+## BUGS FOUND: 4  (CRITICAL: 3 | MODERATE: 1 | MINOR: 0)
+## BUGS FIXED: 4
+## VERIFIED: YES — py_compile passes, Capacitor asset sync complete, background file polling verified.
+## REMAINING: NONE
+
+---
+
+## Audit Details
+[CRITICAL] Line 2283 of bot.py — root cause: Fallback file-based download/stop trigger polling was configured as a JobQueue repeating callback. This dependency fails when optional packages (like `ptb-jobqueue`) are missing on local Windows setups, causing app.job_queue to be None and rendering triggers unmonitored.
+[CRITICAL] Line 581 of server.py & Line 2333 of bot.py — root cause: Stale `download_running` indicator files left over from unhandled process exits or crashes were never cleared on boot, causing future download attempts to permanently return 409 Conflict.
+[CRITICAL] Line 1068 of app.html & www/index.html — root cause: Sync execution was strictly gated on `stats.download_running`. When a download finished, the flag was cleared instantly, leaving any files finished at the tail-end or left from previous runs permanently unsynced.
+[MODERATE] Line 1096 of bot.py — root cause: `bot, cid = target` attempted to unpack target when handling a directory creation OSError in `realtime_download`. If target was "android" (a string), this crashed with a ValueError.
+
+---
+
+## [CRITICAL] Fixes (Trigger & Lifecycle Polling)
+
+### C-1 — Independent Background Polling Loop (`bot.py`)
+* **Root cause:** JobQueue's failure to load in local python environments silently bypassed all mini-app trigger and stop flag monitoring. Furthermore, a 30s poll interval was too slow for mobile users.
+* **Fix:** Coded an independent `poll_miniapp_queue_loop()` async function that scans the filesystem every 1 second. Spawned this loop task directly inside `_combined_post_init`, ensuring high-frequency trigger processing without any library dependencies.
+
+### C-2 — Boot-time State Cleanup (`server.py` & `bot.py`)
+* **Root cause:** Leftover state files on disk blocked all future triggers under a false "already running" condition.
+* **Fix:** Added boot-time glob scanning to clean up any leftover `download_running` files under all user directories when either `server.py` or `bot.py` boots.
+
+### C-3 — Lazy Pending-File Syncing (`app.html` & `mobile_app/www/index.html`)
+* **Root cause:** Restricting syncing to active download durations caused tail-end files to get stuck on the server.
+* **Fix:** Added a `files_waiting` field (using `count_downloaded_files(uid)`) inside `/api/stats`. Modified the frontend's home-screen polling condition to run a sync if the download is running OR if `stats.files_waiting > 0`.
+
+---
+
+## [MODERATE] Fixes (Target Unpacking Safety)
+
+### M-1 — Unpacking Crash Protection (`bot.py`)
+* **Root cause:** Directory creation errors triggered bot message delivery logic which crashed when target was set to the platform string `"android"`.
+* **Fix:** Gated Telegram message dispatch behind `if target != "android":` checks inside `realtime_download` exception blocks.
+
+---
+
 ## Android App UI, Auth & Permission Optimization Session (2026-05-20)
 **Model:** Antigravity
 **Files Audited:** `app.html`, `mobile_app/www/index.html`

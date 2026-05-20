@@ -15,16 +15,38 @@ import hmac
 import json
 import logging
 import os
-# Load .env file manually if exists (no-dependency dotenv fallback)
+# Load .env file manually if exists (no-dependency dotenv fallback supporting multi-line strings)
 try:
     from pathlib import Path as _EnvPath
     _env_path = _EnvPath(__file__).parent / ".env"
     if _env_path.exists():
-        for _line in _env_path.read_text(encoding="utf-8").splitlines():
-            _line = _line.strip()
+        _content = _env_path.read_text(encoding="utf-8")
+        _lines = _content.splitlines()
+        _i = 0
+        while _i < len(_lines):
+            _line = _lines[_i].strip()
             if _line and not _line.startswith("#") and "=" in _line:
                 _k, _v = _line.split("=", 1)
-                os.environ[_k.strip()] = _v.strip().strip('"').strip("'")
+                _k = _k.strip()
+                _v = _v.strip()
+                if _v.startswith('"') and not _v.endswith('"') and not (_v.endswith('"') and len(_v) > 1 and _v[-2] == '\\'):
+                    _val = [_v[1:]]
+                    _i += 1
+                    while _i < len(_lines):
+                        _l = _lines[_i]
+                        if _l.endswith('"') and not _l.endswith('\\"'):
+                            _val.append(_l[:-1])
+                            break
+                        else:
+                            _val.append(_l)
+                        _i += 1
+                    _v = "\n".join(_val)
+                elif _v.startswith('"') and _v.endswith('"'):
+                    _v = _v[1:-1]
+                elif _v.startswith("'") and _v.endswith("'"):
+                    _v = _v[1:-1]
+                os.environ[_k] = _v
+            _i += 1
 except Exception:
     pass
 import shutil
@@ -320,6 +342,7 @@ async def stats(user: dict = Depends(get_user)):
         "schedule":       {"cron": s.get("schedule_cron"), "enabled": s.get("schedule_enabled", False)},
         "cookies_active": cookies,
         "download_running": running,
+        "files_waiting":  count_downloaded_files(uid),
         "username":       user.get("username", ""),
         "first_name":     user.get("first_name", ""),
         "email":          user.get("email", ""),
@@ -557,6 +580,14 @@ async def delete_file(file_path: str, uid: int = Depends(get_uid)):
     return {"status": "deleted"}
 
 # ── Entry point ───────────────────────────────────────────────────────
+
+# Clear any stale download_running flags on boot
+if DATA_ROOT.exists():
+    for run_flag in DATA_ROOT.glob("*/download_running"):
+        try:
+            run_flag.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 def start(port: int = 8080):
     """Called from bot.py background thread."""

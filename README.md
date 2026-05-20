@@ -91,15 +91,27 @@ We recommend [Railway](https://railway.app) for the easiest setup, but it runs a
    - `ADMIN_IDS` — your Telegram ID
 5. Deploy
 
-### Manual
+### Local Development (Windows)
 
-```bash
-git clone https://github.com/Copyright-News/cuhibot.git
-cd cuhibot
-pip install -r requirements.txt
-export BOT_TOKEN="your-token-here"
-python bot.py
-```
+For running the ecosystem locally on a Windows PC (for testing or development), a pre-configured automation script is provided:
+
+1. **Pre-requisites**:
+   - Install Python 3.11+.
+   - Add your Telegram Bot token and configurations in `.env`.
+   - Ensure the included `cloudflared.exe` is present in the root folder (or install `cloudflared` on your path).
+
+2. **Launch with One Click**:
+   Double-click or execute [run_local.bat](file:///e:/Copyright%20News/cuhibot/run_local.bat) in your command prompt:
+   ```bash
+   run_local.bat
+   ```
+
+3. **How it works under the hood**:
+   - **Service Cleanup**: On start, the script kills any stale/orphaned `python.exe` or `cloudflared.exe` processes to release ports (like port `8080`) and file locks.
+   - **Tunnel Provisioning**: It runs a Cloudflare Quick Tunnel using `cloudflared.exe tunnel --url http://localhost:8080`, generating a public HTTPS URL (redirected to your local port 8080) and writing output to `tunnel.log`.
+   - **Auto-Configurator**: The script runs [update_env.py](file:///e:/Copyright%20News/cuhibot/update_env.py), which parses the newly generated `trycloudflare.com` URL from `tunnel.log` and automatically writes/updates `RAILWAY_PUBLIC_DOMAIN="[your-tunnel-id].trycloudflare.com"` in your `.env`.
+   - **Unified Application Boot**: Finally, the script boots [bot.py](file:///e:/Copyright%20News/cuhibot/bot.py) in a new window. The bot reads `.env`, starts the Telegram polling loop, and automatically hosts the FastAPI Web App internally in a background daemon thread on port 8080.
+   - **Instant Integration**: Both the Telegram Bot's Mini App button and the Standalone Android App will now connect seamlessly to the public Cloudflare tunnel URL, forwarding requests directly to your local FastAPI server.
 
 ---
 

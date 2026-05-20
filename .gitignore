@@ -57,4 +57,4 @@ mobile_app/android/build/
 mobile_app/android/app/build/
 mobile_app/android/app/release/
 node_modules/
-
+cloudflared.exe

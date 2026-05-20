@@ -1065,9 +1065,10 @@ async function updateHomeStats() {
     
   } catch(e) { console.error('Poll error', e); }
   
-  // [FIXED] Only sync when a download is actually running — prevents
-  // infinite empty polls and duplicate gallery saves from stale server files
-  if (isNativeApp && stats.download_running) {
+  // [FIXED] Sync if download is running OR if there are files waiting on the server.
+  // This guarantees all files are saved to the device even after the download ceases,
+  // and recovers unsynced files when the app is restarted.
+  if (isNativeApp && (stats.download_running || (stats.files_waiting && stats.files_waiting > 0))) {
     syncNativeFiles();
   }
 }

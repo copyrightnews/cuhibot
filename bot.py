@@ -41,16 +41,38 @@ import logging
 import hashlib
 import hmac
 import os
-# Load .env file manually if exists (no-dependency dotenv fallback)
+# Load .env file manually if exists (no-dependency dotenv fallback supporting multi-line strings)
 try:
     from pathlib import Path as _EnvPath
     _env_path = _EnvPath(__file__).parent / ".env"
     if _env_path.exists():
-        for _line in _env_path.read_text(encoding="utf-8").splitlines():
-            _line = _line.strip()
+        _content = _env_path.read_text(encoding="utf-8")
+        _lines = _content.splitlines()
+        _i = 0
+        while _i < len(_lines):
+            _line = _lines[_i].strip()
             if _line and not _line.startswith("#") and "=" in _line:
                 _k, _v = _line.split("=", 1)
-                os.environ[_k.strip()] = _v.strip().strip('"').strip("'")
+                _k = _k.strip()
+                _v = _v.strip()
+                if _v.startswith('"') and not _v.endswith('"') and not (_v.endswith('"') and len(_v) > 1 and _v[-2] == '\\'):
+                    _val = [_v[1:]]
+                    _i += 1
+                    while _i < len(_lines):
+                        _l = _lines[_i]
+                        if _l.endswith('"') and not _l.endswith('\\"'):
+                            _val.append(_l[:-1])
+                            break
+                        else:
+                            _val.append(_l)
+                        _i += 1
+                    _v = "\n".join(_val)
+                elif _v.startswith('"') and _v.endswith('"'):
+                    _v = _v[1:-1]
+                elif _v.startswith("'") and _v.endswith("'"):
+                    _v = _v[1:-1]
+                os.environ[_k] = _v
+            _i += 1
 except Exception:
     pass
 import re
@@ -1068,11 +1090,12 @@ async def realtime_download(
     except OSError as exc:
         msg = f"❌ Disk full. Tap 🗑️ Free disk or send /cleanup.\n`{exc}`"
         try:
-            if hasattr(target, "reply_text"):
-                await target.reply_text(msg, parse_mode="Markdown")
-            else:
-                bot, cid = target
-                await bot.send_message(chat_id=cid, text=msg, parse_mode="Markdown")
+            if target != "android":
+                if hasattr(target, "reply_text"):
+                    await target.reply_text(msg, parse_mode="Markdown")
+                else:
+                    bot, cid = target
+                    await bot.send_message(chat_id=cid, text=msg, parse_mode="Markdown")
         except Exception:
             pass
         return 0
@@ -2258,6 +2281,40 @@ async def miniapp_queue_worker(bot) -> None:
             await asyncio.sleep(1)
 
 
+async def poll_miniapp_queue_loop() -> None:
+    """Async loop to scan for disk-based trigger and stop files every second.
+    This works independently of python-telegram-bot's JobQueue and responds instantly.
+    """
+    logger.info("Mini App file polling loop active")
+    while True:
+        try:
+            if MINIAPP_QUEUE is not None and DATA_ROOT.exists():
+                # ── Download triggers ────────────────────────────────────────
+                for trigger_file in DATA_ROOT.glob("*/download_trigger.json"):
+                    try:
+                        uid = int(trigger_file.parent.name)
+                        trigger_data = json.loads(trigger_file.read_text(encoding="utf-8"))
+                        trigger_file.unlink(missing_ok=True)
+                        if uid not in ACTIVE_USERS:
+                            await MINIAPP_QUEUE.put({"type": "download", "uid": uid, "data": trigger_data})
+                    except Exception:
+                        continue
+
+                # ── Stop flags ───────────────────────────────────────────────
+                for stop_file in DATA_ROOT.glob("*/stop_flag"):
+                    try:
+                        uid = int(stop_file.parent.name)
+                        stop_file.unlink(missing_ok=True)
+                        if uid in ACTIVE_USERS and uid in STOP_EVENTS:
+                            STOP_EVENTS[uid].set()
+                            logger.info("Local loop STOP triggered for uid=%s", uid)
+                    except Exception:
+                        continue
+        except Exception as e:
+            logger.error("Error in poll_miniapp_queue_loop: %s", e)
+        await asyncio.sleep(1)
+
+
 async def _combined_post_init(application: Application) -> None:
     """Combined post_init: restore schedules + start queue worker."""
     global MINIAPP_QUEUE
@@ -2268,10 +2325,24 @@ async def _combined_post_init(application: Application) -> None:
     _TASKS.add(worker)
     worker.add_done_callback(_TASKS.discard)
 
+    loop_task = asyncio.create_task(poll_miniapp_queue_loop())
+    _TASKS.add(loop_task)
+    loop_task.add_done_callback(_TASKS.discard)
+
 
 def main() -> None:
     if TOKEN == "YOUR_BOT_TOKEN": return
     bootstrap_env_cookies()
+    
+    # Clear any stale download_running flags from previous crashes/shutdowns
+    if DATA_ROOT.exists():
+        for run_flag in DATA_ROOT.glob("*/download_running"):
+            try:
+                run_flag.unlink(missing_ok=True)
+                logger.info("Cleared stale download_running flag on startup: %s", run_flag)
+            except Exception:
+                pass
+
     request = HTTPXRequest(connect_timeout=15.0, read_timeout=30.0, write_timeout=60.0, pool_timeout=60.0, connection_pool_size=200)
     app = Application.builder().token(TOKEN).request(request).post_init(_combined_post_init).build()
     
