@@ -15,21 +15,28 @@ timeout /t 1 /nobreak >nul
 if exist tunnel.log del tunnel.log
 
 echo.
-echo [1/2] Starting Cloudflare Tunnel in the background...
+echo [1/3] Starting Cloudflare Tunnel in the background...
 start "Cloudflare Tunnel Daemon" /min cmd /c "cloudflared.exe tunnel --url http://localhost:8080 > tunnel.log 2>&1"
 
 :: Wait for URL and update .env
 python update_env.py
 
-echo [2/2] Starting Telegram Bot (includes FastAPI Backend)...
+:: Set environment to skip starting the duplicate embedded server in bot.py
+set SKIP_EMBEDDED_SERVER=1
+
+echo [2/3] Starting FastAPI Backend Server...
+start "FastAPI Server" cmd /k "python server.py"
+
+echo [3/3] Starting Telegram Bot...
 start "Telegram Bot" cmd /k "python bot.py"
 
 echo.
 echo ==================================================
 echo Services have been successfully launched!
 echo.
-echo  - Keep the Telegram Bot window open to keep running.
-echo  - Close it to stop the bot and the backend server.
+echo  - Keep both the FastAPI Server and Telegram Bot windows open.
+echo  - You can view detailed FastAPI requests in the Server window.
+echo  - Close them to stop the local environment.
 echo ==================================================
 echo.
 pause

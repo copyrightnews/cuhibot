@@ -49,6 +49,23 @@ try:
             _i += 1
 except Exception:
     pass
+
+# Automatic Cloudflare Tunnel URL discovery from tunnel.log for local development
+try:
+    from pathlib import Path as _EnvPath
+    _tunnel_log_path = _EnvPath(__file__).parent / "tunnel.log"
+    if _tunnel_log_path.exists():
+        _log_content = _tunnel_log_path.read_text(errors="ignore")
+        import re as _re
+        _match = _re.search(r"https://([a-zA-Z0-9\-]+\.trycloudflare\.com)", _log_content)
+        if _match:
+            _domain_found = _match.group(1)
+            if not os.environ.get("PUBLIC_DOMAIN"):
+                os.environ["PUBLIC_DOMAIN"] = _domain_found
+            if not os.environ.get("RAILWAY_PUBLIC_DOMAIN"):
+                os.environ["RAILWAY_PUBLIC_DOMAIN"] = _domain_found
+except Exception:
+    pass
 import shutil
 import urllib.parse
 from pathlib import Path
