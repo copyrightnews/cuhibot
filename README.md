@@ -91,27 +91,64 @@ We recommend [Railway](https://railway.app) for the easiest setup, but it runs a
    - `ADMIN_IDS` — your Telegram ID
 5. Deploy
 
-### Local Development (Windows)
+### Local Development & Testing (Windows)
 
-For running the ecosystem locally on a Windows PC (for testing or development), a pre-configured automation script is provided:
+Running the Cuhi mobile app or Mini App locally requires exposing your local machine to the internet so the mobile companion (or Telegram's servers) can reach your local FastAPI server. For this purpose, a pre-configured automation script is provided.
+
+#### 📡 Local Request Architecture
+
+Below is how the request and sync flow is established when running locally:
+
+```mermaid
+sequenceDiagram
+    participant App as Standalone Android App
+    participant CF as Cloudflare Edge (Public HTTPS)
+    participant LocalHost as Local Port 8080 (bot.py/server.py)
+    participant TG as Telegram API
+    participant Target as Media Platforms (Insta/TikTok/X/FB)
+
+    App->>CF: API Call (e.g. GET /api/stats, POST /api/download)
+    Note over CF: Cloudflare Tunnel forwards public HTTPS to local HTTP port 8080
+    CF->>LocalHost: Forwarded HTTP request
+    LocalHost-->>CF: HTTP Response
+    CF-->>App: Mobile App receives data/acknowledgment
+    
+    Note over LocalHost: bot.py queue worker processes the download request
+    LocalHost->>Target: Download media via gallery-dl/yt-dlp
+    Target-->>LocalHost: Media files saved to local data/{uid}/downloads/
+    
+    loop Real-time Polling Sync
+        App->>LocalHost: Download pending files via /api/files
+        LocalHost-->>App: Stream media file bytes
+        Note over App: Save to phone's standard Documents/Cuhi gallery folder
+    end
+```
+
+#### 🛠️ Step-by-Step Lifecycle of `run_local.bat`
+
+When you double-click or run [run_local.bat](file:///e:/Copyright%20News/cuhibot/run_local.bat), it performs the following steps automatically:
+
+1. **Forceful Clean & Port Release**:
+   It automatically kills any orphaned `python.exe` or `cloudflared.exe` processes from previous runs. This releases ports (like `8080`) and locks, preventing port collisions on launch.
+2. **Cloudflare Tunnel Daemon**:
+   It launches `cloudflared.exe` in a minimized background daemon window, instructing it to map a temporary public HTTPS tunnel to `http://localhost:8080`.
+3. **Auto-Configuration Parsing (`update_env.py`)**:
+   It starts [update_env.py](file:///e:/Copyright%20News/cuhibot/update_env.py), which reads `tunnel.log`, extracts the randomly generated `*.trycloudflare.com` subdomain, and automatically updates the `RAILWAY_PUBLIC_DOMAIN` variable inside your local `.env`.
+4. **Unified Application Startup**:
+   Finally, it launches [bot.py](file:///e:/Copyright%20News/cuhibot/bot.py) in a new terminal. Since `RAILWAY_PUBLIC_DOMAIN` is now set in `.env`, the bot automatically boots the FastAPI backend ([server.py](file:///e:/Copyright%20News/cuhibot/server.py)) inside its own process as a background thread on port `8080` (replicating the production deployment structure).
+
+#### 🚀 Quick Start Guide (Local Setup)
 
 1. **Pre-requisites**:
    - Install Python 3.11+.
-   - Add your Telegram Bot token and configurations in `.env`.
-   - Ensure the included `cloudflared.exe` is present in the root folder (or install `cloudflared` on your path).
-
-2. **Launch with One Click**:
-   Double-click or execute [run_local.bat](file:///e:/Copyright%20News/cuhibot/run_local.bat) in your command prompt:
-   ```bash
-   run_local.bat
-   ```
-
-3. **How it works under the hood**:
-   - **Service Cleanup**: On start, the script kills any stale/orphaned `python.exe` or `cloudflared.exe` processes to release ports (like port `8080`) and file locks.
-   - **Tunnel Provisioning**: It runs a Cloudflare Quick Tunnel using `cloudflared.exe tunnel --url http://localhost:8080`, generating a public HTTPS URL (redirected to your local port 8080) and writing output to `tunnel.log`.
-   - **Auto-Configurator**: The script runs [update_env.py](file:///e:/Copyright%20News/cuhibot/update_env.py), which parses the newly generated `trycloudflare.com` URL from `tunnel.log` and automatically writes/updates `RAILWAY_PUBLIC_DOMAIN="[your-tunnel-id].trycloudflare.com"` in your `.env`.
-   - **Unified Application Boot**: Finally, the script boots [bot.py](file:///e:/Copyright%20News/cuhibot/bot.py) in a new window. The bot reads `.env`, starts the Telegram polling loop, and automatically hosts the FastAPI Web App internally in a background daemon thread on port 8080.
-   - **Instant Integration**: Both the Telegram Bot's Mini App button and the Standalone Android App will now connect seamlessly to the public Cloudflare tunnel URL, forwarding requests directly to your local FastAPI server.
+   - Add your Telegram Bot Token and configuration credentials in a `.env` file in the root directory.
+   - Keep the included `cloudflared.exe` in the root directory.
+2. **Launch Services**:
+   - Double-click or run [run_local.bat](file:///e:/Copyright%20News/cuhibot/run_local.bat).
+   - Wait 5–10 seconds. The console will print your public Tunnel URL and launch the **Telegram Bot** console.
+3. **Link Mobile/Mini App**:
+   - Execute `npx cap sync` in the `mobile_app/` folder to bundle the updated configuration.
+   - Run/Compile the project inside **Android Studio** onto your device or emulator. It will automatically connect directly to your local server over the secure tunnel!
 
 ---
 
