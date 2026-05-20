@@ -352,31 +352,7 @@ body.theme-light #toast { background: rgba(255,255,255,0.92); color: #000; borde
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);
   margin-top: 10px;
 }
-.auth-tabs {
-  display: flex;
-  background: rgba(255, 255, 255, 0.04);
-  padding: 4px;
-  border-radius: 12px;
-  margin-bottom: 20px;
-}
-.auth-tab {
-  flex: 1;
-  padding: 10px 8px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.6);
-  cursor: pointer;
-  text-align: center;
-  transition: all 0.2s ease;
-  background: transparent;
-  border: none;
-}
-.auth-tab.active {
-  background: var(--blue);
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(0, 198, 251, 0.3);
-}
+
 .form-group {
   margin-bottom: 14px;
   text-align: left;
@@ -422,31 +398,7 @@ body.theme-light #toast { background: rgba(255,255,255,0.92); color: #000; borde
 .auth-btn:active {
   transform: scale(0.98);
 }
-.google-btn {
-  width: 100%;
-  padding: 11px;
-  background: #fff;
-  color: #1a1a1a;
-  font-size: 14px;
-  font-weight: 700;
-  border: none;
-  border-radius: 10px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  transition: transform 0.15s ease;
-}
-.google-btn:active {
-  transform: scale(0.98);
-}
-.google-icon {
-  width: 18px;
-  height: 18px;
-}
+
 </style>
 </head>
 <body>
@@ -477,98 +429,20 @@ body.theme-light #toast { background: rgba(255,255,255,0.92); color: #000; borde
 
     <!-- Main Container -->
     <div class="auth-container">
-      <div class="auth-tabs">
-        <button class="auth-tab active" onclick="switchAuthTab('login')">Login</button>
-        <button class="auth-tab" onclick="switchAuthTab('register')">Register</button>
-        <button class="auth-tab" onclick="switchAuthTab('token')">Token</button>
-      </div>
-
-      <!-- Email Login Form -->
-      <div id="auth-login-view">
-        <div class="form-group">
-          <label class="form-label">Email Address</label>
-          <input type="email" id="auth-login-email" class="auth-input" placeholder="name@example.com">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Password</label>
-          <input type="password" id="auth-login-password" class="auth-input" placeholder="••••••••">
-        </div>
-        <button class="auth-btn" onclick="submitLogin()">Log In</button>
-        
-        <div style="display:flex; align-items:center; margin:14px 0; color:rgba(255,255,255,0.25); font-size:11px;">
-          <div style="flex:1; height:1px; background:rgba(255,255,255,0.08);"></div>
-          <span style="padding:0 8px;">OR</span>
-          <div style="flex:1; height:1px; background:rgba(255,255,255,0.08);"></div>
-        </div>
-
-        <button class="google-btn" onclick="submitGoogleAuth()">
-          <svg class="google-icon" viewBox="0 0 24 24">
-            <path fill="#EA4335" d="M12.24 10.285V14.4h6.887c-.648 2.41-2.519 4.114-5.136 4.114-3.232 0-5.852-2.618-5.852-5.85s2.62-5.85 5.852-5.85c1.47 0 2.809.544 3.842 1.436L20.89 5.37C18.667 3.3 15.688 2 12.24 2 6.6 2 2 6.6 2 12.24s4.6 10.24 10.24 10.24c5.795 0 10.254-4.074 10.254-10.24 0-.693-.08-1.36-.226-1.955H12.24Z"/>
-          </svg>
-          Sign in with Google
-        </button>
-      </div>
-
-      <!-- Email Registration Form -->
-      <div id="auth-register-view" style="display:none;">
-        <div class="form-group">
-          <label class="form-label">First Name</label>
-          <input type="text" id="auth-reg-name" class="auth-input" placeholder="Your Name">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Email Address</label>
-          <input type="email" id="auth-reg-email" class="auth-input" placeholder="name@example.com">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Password</label>
-          <input type="password" id="auth-reg-password" class="auth-input" placeholder="Min. 6 characters">
-        </div>
-        <button class="auth-btn" onclick="submitRegister()">Create Account</button>
-      </div>
-
       <!-- Telegram Token Login Form -->
-      <div id="auth-token-view" style="display:none;">
+      <div id="auth-token-view">
         <div class="form-group">
-          <label class="form-label">App Token</label>
-          <input type="text" id="login-token" class="auth-input" placeholder="UID:HMAC (from bot /app)">
+          <label class="form-label" style="text-transform: uppercase; font-size: 11px; font-weight: 700; color: var(--blue); letter-spacing: 0.5px; margin-bottom: 6px; display: block; text-align: left;">Secure App Token</label>
+          <input type="text" id="login-token" class="auth-input" placeholder="UID:HMAC (from Telegram bot)" style="text-align: center;">
         </div>
-        <button class="auth-btn" onclick="submitTokenLogin()">Verify Token</button>
-        <p style="color:rgba(255,255,255,0.4); font-size:11px; margin-top:12px; line-height:1.4;">Send <code style="background:rgba(255,255,255,0.06); padding:2px 4px; border-radius:4px; font-family:monospace;">/app</code> to the Telegram bot to fetch your secure connection token.</p>
+        <button class="auth-btn" onclick="submitTokenLogin()">Verify & Connect</button>
+        <p style="color:rgba(255,255,255,0.4); font-size:11.5px; margin-top:14px; line-height:1.4; text-align: left;">Send <code style="background:rgba(255,255,255,0.06); padding:2px 4.5px; border-radius:4px; font-family:monospace; color:var(--blue);">/app</code> to the Telegram bot to generate your secure authentication token.</p>
       </div>
     </div>
   </div>
 </div>
 
-<!-- ── Google Account Chooser Modal ── -->
-<div id="google-chooser-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); z-index:10000; align-items:center; justify-content:center; padding:16px; box-sizing:border-box;">
-  <div style="background:#1e1e1e; border:1px solid rgba(255,255,255,0.08); width:100%; max-width:340px; border-radius:24px; padding:24px; box-shadow:0 12px 40px rgba(0,0,0,0.5); text-align:left; box-sizing:border-box; animation: modalSlideIn 0.3s cubic-bezier(0.19, 1, 0.22, 1);">
-    <div style="display:flex; justify-content:center; margin-bottom:16px;">
-      <svg width="24" height="24" viewBox="0 0 24 24">
-        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l3.66-2.85z"/>
-        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.85c.87-2.6 3.3-4.53 6.16-4.53z"/>
-      </svg>
-    </div>
-    <h2 style="font-family:'Outfit', sans-serif; font-size:20px; font-weight:700; color:#fff; margin:0 0 4px 0; text-align:center;">Choose an account</h2>
-    <p style="font-size:13px; color:rgba(255,255,255,0.4); margin:0 0 20px 0; text-align:center;">to continue to <span style="color:var(--blue); font-weight:600;">Cuhi</span></p>
-    <div id="google-accounts-list" style="display:flex; flex-direction:column; gap:8px; margin-bottom:16px;"></div>
-    <div id="google-add-account-group" style="display:none; margin-bottom:16px;">
-      <div style="font-size:11px; color:var(--blue); font-weight:700; text-transform:uppercase; margin-bottom:6px; letter-spacing:0.5px;">Enter Google Email</div>
-      <input type="email" id="google-custom-email" class="auth-input" placeholder="example@gmail.com" style="margin-bottom:10px;">
-      <div style="display:flex; gap:8px;">
-        <button class="auth-btn" style="flex:1; padding:8px 12px; font-size:13px;" onclick="confirmAddGoogleAccount()">Continue</button>
-        <button class="google-btn" style="flex:1; margin:0; padding:8px 12px; font-size:13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08);" onclick="cancelAddGoogleAccount()">Cancel</button>
-      </div>
-    </div>
-    <div style="font-size:11px; color:rgba(255,255,255,0.3); line-height:1.4; text-align:center; border-top:1px solid rgba(255,255,255,0.06); padding-top:14px;">
-      To continue, Google will share your name, email address, and profile picture with Cuhi.
-    </div>
-    <button class="google-btn" style="margin:14px 0 0 0; width:100%; font-size:13px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); height:38px; display:flex; align-items:center; justify-content:center;" onclick="closeGoogleChooser()">
-      Cancel
-    </button>
-  </div>
-</div>
+
 
 <div id="app">
   <div id="pages">
@@ -921,25 +795,7 @@ function showLoginGate() {
   document.getElementById('app').style.display = 'none';
 }
 
-function switchAuthTab(tab) {
-  const tabs = document.querySelectorAll('.auth-tab');
-  tabs.forEach(t => t.classList.remove('active'));
-  
-  document.getElementById('auth-login-view').style.display = 'none';
-  document.getElementById('auth-register-view').style.display = 'none';
-  document.getElementById('auth-token-view').style.display = 'none';
-  
-  if (tab === 'login') {
-    if (tabs[0]) tabs[0].classList.add('active');
-    document.getElementById('auth-login-view').style.display = 'block';
-  } else if (tab === 'register') {
-    if (tabs[1]) tabs[1].classList.add('active');
-    document.getElementById('auth-register-view').style.display = 'block';
-  } else if (tab === 'token') {
-    if (tabs[2]) tabs[2].classList.add('active');
-    document.getElementById('auth-token-view').style.display = 'block';
-  }
-}
+
 
 // Prefill Server URL and handle Splash Screen
 window.addEventListener('DOMContentLoaded', () => {
@@ -972,175 +828,7 @@ window.addEventListener('DOMContentLoaded', () => {
   }, 1800);
 });
 
-async function submitLogin() {
-  const url = document.getElementById('login-url').value.trim();
-  const email = document.getElementById('auth-login-email').value.trim();
-  const password = document.getElementById('auth-login-password').value;
-  if (!url || !email || !password) return showToast('⚠️ All fields are required');
-  
-  try {
-    const formattedUrl = url.replace(/\/$/, '');
-    const res = await fetch(formattedUrl + '/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({detail: 'Invalid credentials'}));
-      throw new Error(err.detail || 'Login failed');
-    }
-    const data = await res.json();
-    localStorage.setItem('cuhi_api_url', formattedUrl);
-    localStorage.setItem('cuhi_app_token', data.token);
-    showToast('✅ Logged in successfully');
-    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('success'));
-    setTimeout(() => window.location.reload(), 800);
-  } catch(e) {
-    showToast('❌ ' + e.message);
-    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('error'));
-  }
-}
 
-async function submitRegister() {
-  const url = document.getElementById('login-url').value.trim();
-  const name = document.getElementById('auth-reg-name').value.trim();
-  const email = document.getElementById('auth-reg-email').value.trim();
-  const password = document.getElementById('auth-reg-password').value;
-  if (!url || !email || !password) return showToast('⚠️ Email and password are required');
-  
-  try {
-    const formattedUrl = url.replace(/\/$/, '');
-    const res = await fetch(formattedUrl + '/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, first_name: name || undefined })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({detail: 'Registration failed'}));
-      throw new Error(err.detail || 'Registration failed');
-    }
-    const data = await res.json();
-    localStorage.setItem('cuhi_api_url', formattedUrl);
-    localStorage.setItem('cuhi_app_token', data.token);
-    showToast('✅ Account registered successfully');
-    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('success'));
-    setTimeout(() => window.location.reload(), 800);
-  } catch(e) {
-    showToast('❌ ' + e.message);
-    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('error'));
-  }
-}
-
-function submitGoogleAuth() {
-  const url = document.getElementById('login-url').value.trim();
-  if (!url) return showToast('⚠️ Please enter the Server URL first');
-  
-  const modal = document.getElementById('google-chooser-modal');
-  modal.style.display = 'flex';
-  
-  let accounts = [];
-  try {
-    accounts = JSON.parse(localStorage.getItem('cuhi_google_accounts') || '[]');
-  } catch(e) {}
-  
-  if (accounts.length === 0) {
-    accounts = [
-      { email: 'nahid.hassan@gmail.com', name: 'Nahid Hassan', avatar: '' }
-    ];
-  }
-  
-  const list = document.getElementById('google-accounts-list');
-  let html = '';
-  
-  accounts.forEach((acc, idx) => {
-    html += `
-      <div onclick="selectGoogleAccount('${acc.email}', '${acc.name}')" style="display:flex; align-items:center; padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.04); border-radius:14px; cursor:pointer; transition:all 0.2s ease;">
-        <div style="width:36px; height:36px; border-radius:50%; margin-right:12px; overflow:hidden; background:var(--gradient-blue); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:14px; flex-shrink:0;">
-          ${acc.avatar ? `<img src="${acc.avatar}" style="width:100%; height:100%; object-fit:cover;" onerror="this.style.display='none'; this.parentElement.innerHTML='${acc.name.charAt(0).toUpperCase()}'">` : acc.name.charAt(0).toUpperCase()}
-        </div>
-        <div style="flex:1; overflow:hidden;">
-          <div style="font-size:14px; font-weight:600; color:#fff; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; text-align:left;">${acc.name}</div>
-          <div style="font-size:11px; color:rgba(255,255,255,0.4); text-overflow:ellipsis; overflow:hidden; white-space:nowrap; text-align:left;">${acc.email}</div>
-        </div>
-      </div>
-    `;
-  });
-  
-  html += `
-    <div onclick="showAddGoogleAccount()" style="display:flex; align-items:center; padding:12px; background:transparent; border:1px dashed rgba(255,255,255,0.15); border-radius:14px; cursor:pointer; transition:all 0.2s ease;">
-      <div style="width:36px; height:36px; border-radius:50%; margin-right:12px; border:1px solid rgba(255,255,255,0.15); display:flex; align-items:center; justify-content:center; color:#fff; font-size:18px; flex-shrink:0; background:rgba(255,255,255,0.02);">
-        +
-      </div>
-      <div style="font-size:14px; font-weight:600; color:var(--blue); text-align:left;">Use another account</div>
-    </div>
-  `;
-  
-  list.innerHTML = html;
-  list.style.display = 'flex';
-  document.getElementById('google-add-account-group').style.display = 'none';
-}
-
-async function selectGoogleAccount(email, name) {
-  closeGoogleChooser();
-  const url = document.getElementById('login-url').value.trim();
-  if (!url) return;
-  const googleId = "g_" + Math.random().toString(36).substr(2, 9);
-  
-  try {
-    showToast('Connecting Google account...');
-    const formattedUrl = url.replace(/\/$/, '');
-    const res = await fetch(formattedUrl + '/api/auth/google', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, name, google_id: googleId })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({detail: 'Google auth failed'}));
-      throw new Error(err.detail || 'Google sign-in failed');
-    }
-    const data = await res.json();
-    
-    let accounts = [];
-    try {
-      accounts = JSON.parse(localStorage.getItem('cuhi_google_accounts') || '[]');
-    } catch(e) {}
-    accounts = accounts.filter(acc => acc.email !== email);
-    accounts.unshift({ email, name, avatar: '' });
-    localStorage.setItem('cuhi_google_accounts', JSON.stringify(accounts));
-    
-    localStorage.setItem('cuhi_api_url', formattedUrl);
-    localStorage.setItem('cuhi_app_token', data.token);
-    showToast('✅ Google Authentication successful');
-    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('success'));
-    setTimeout(() => window.location.reload(), 800);
-  } catch(e) {
-    showToast('❌ ' + e.message);
-    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('error'));
-  }
-}
-
-function showAddGoogleAccount() {
-  document.getElementById('google-accounts-list').style.display = 'none';
-  document.getElementById('google-add-account-group').style.display = 'block';
-}
-
-function cancelAddGoogleAccount() {
-  document.getElementById('google-accounts-list').style.display = 'flex';
-  document.getElementById('google-add-account-group').style.display = 'none';
-}
-
-function confirmAddGoogleAccount() {
-  const email = document.getElementById('google-custom-email').value.trim();
-  if (!email || !email.includes('@')) {
-    return showToast('⚠️ Please enter a valid email address');
-  }
-  const name = email.split('@')[0];
-  selectGoogleAccount(email, name);
-}
-
-function closeGoogleChooser() {
-  document.getElementById('google-chooser-modal').style.display = 'none';
-}
 
 async function submitTokenLogin() {
   const url = document.getElementById('login-url').value.trim();

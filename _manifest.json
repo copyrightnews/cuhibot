@@ -1,5 +1,5 @@
 {
-  "task": "Push stable release tag v2.1.0 and synchronize GitHub releases with premium assets/logo",
+  "task": "Restrict standalone app to Telegram Token Login Only (Option A)",
   "workspace": "cuhibot",
   "original_model": "Gemini 3.5 Flash",
   "current_model": "Antigravity",
@@ -9,5 +9,5 @@
   "next_part": null,
   "next_function": null,
   "status": "complete",
-  "style_notes": "Successfully created and pushed the v2.1.0 git tag to https://github.com/Copyright-News/cuhibot.git. This synchronizes the GitHub releases and tags section with the premium logo, Scoped Storage improvements, Google Auth account chooser, and keyboard viewport optimizations."
+  "style_notes": "Perfect synchronization achieved between app.html, index.html, and mobile_app/www/index.html. Obsolete auth elements and JavaScript handlers successfully pruned. Capacitor Android asset bundle synchronized successfully."
 }
