@@ -121,6 +121,12 @@ TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
 
 import server as _server_module
 domain = os.environ.get("PUBLIC_DOMAIN") or os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+if domain:
+    if domain.startswith("https://"):
+        domain = domain[8:]
+    elif domain.startswith("http://"):
+        domain = domain[7:]
+    domain = domain.rstrip("/")
 MINI_APP_URL = f"https://{domain}" if domain else ""
 
 def start_mini_app_server():

@@ -1,5 +1,31 @@
 # Deep Audit Fix Report — Full Session
 
+## Railway Domain Normalization & WebApp Button Fix Session (2026-05-21)
+**Model:** Antigravity
+**Files Audited:** `bot.py`
+
+---
+
+## BUGS FOUND: 1  (CRITICAL: 1 | MODERATE: 0 | MINOR: 0)
+## BUGS FIXED: 1
+## VERIFIED: YES — py_compile passes.
+## REMAINING: NONE
+
+---
+
+## Audit Details
+[CRITICAL] Line 123 of bot.py — root cause: When the `PUBLIC_DOMAIN` variable is set with a protocol scheme (like `https://www.cuhie.mvp.bd/`) in the Railway dashboard, `MINI_APP_URL` is parsed into `https://https://www.cuhie.mvp.bd/`. Sending this malformed URL inside the inline keyboard button web_app WebAppInfo crashes the bot on sending messages with a BadRequest exception.
+
+---
+
+## [CRITICAL] Fixes (Domain Normalization)
+
+### C-1 — Auto-Strip Protocol Schemes and Trailing Slashes
+* **Root cause:** Accidental inclusions of `http://`, `https://`, or trailing slashes inside the `PUBLIC_DOMAIN` environment variable caused double-protocol prefixes or malformed routing.
+* **Fix:** Coded pre-processing parsing logic directly in `bot.py` to auto-strip `https://`, `http://`, and trailing slashes `/` from the loaded `domain` variable before initializing `MINI_APP_URL`.
+
+---
+
 ## Railway Boot Stability & Port Binding Hardening Session (2026-05-21)
 **Model:** Antigravity (Thinking)
 **Files Audited:** `bot.py`

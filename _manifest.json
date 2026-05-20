@@ -1,13 +1,13 @@
 {
-  "task": "Local Dev and CI Cleanup",
+  "task": "Domain Scheme Normalization",
   "workspace": "cuhibot",
-  "original_model": "Antigravity (Thinking)",
-  "current_model": "Antigravity (Thinking)",
+  "original_model": "Antigravity",
+  "current_model": "Antigravity",
   "total_parts": 1,
   "parts_completed": [1],
   "stopped_at": null,
   "next_part": null,
   "next_function": null,
   "status": "complete",
-  "style_notes": "All local testing/tunnelling files (run_local.bat, update_env.py, test_bot.py, cloudflared.exe, tunnel.log, and CI workflows) have been removed from the repository to leave only clean production-serving code."
+  "style_notes": "Normalized domain parsing in bot.py to automatically handle protocol prefixes (http://, https://) and trailing slashes in environment variables to prevent double-protocol WebApp button crashes."
 }
