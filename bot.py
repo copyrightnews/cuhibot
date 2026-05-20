@@ -1605,7 +1605,7 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         def _add(current: list[str]) -> list[str]:
             if text in current: return current
             if len(current) >= MAX_PROFILES_PER_PLATFORM: return current
-            return current + [text]
+            return [text] + current
 
         existing = await read_profiles(uid, platform)
         if text in existing:

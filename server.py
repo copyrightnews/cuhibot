@@ -335,7 +335,7 @@ async def add_source(body: SourceAdd, uid: int = Depends(get_uid)):
     urls = read_profiles(uid, plat)
     if body.url in urls:
         raise HTTPException(409, "Source already exists")
-    urls.append(body.url)
+    urls.insert(0, body.url)
     write_profiles(uid, plat, urls)
     return {"url": body.url, "platform": plat}
 
