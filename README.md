@@ -78,18 +78,28 @@ Cuhi is fully integrated and optimized to run as a native mobile application via
 
 ## 🚀 Getting Started
 
-We recommend [Railway](https://railway.app) for the easiest setup, but it runs anywhere with Python 3.11+.
+The ecosystem can be deployed anywhere Python 3.11+ can run (Docker, VPS, Cloud VPS, etc.).
 
-### Railway (Recommended)
+### Docker Deployment (Recommended)
 
-1. **Fork** this repo
-2. Connect it to a new Railway project
-3. Add a persistent volume mounted at `/app/data`
-4. Set environment variables:
-   - `BOT_TOKEN` — from @BotFather
-   - `ALLOWED_USERS` — comma-separated Telegram user IDs
-   - `ADMIN_IDS` — your Telegram ID
-5. Deploy
+1. **Clone** the repository.
+2. Build the Docker image:
+   ```bash
+   docker build -t cuhibot .
+   ```
+3. Run the container, ensuring you mount a persistent volume for caching and cookie storage:
+   ```bash
+   docker run -d \
+     --name cuhibot \
+     -v /path/to/local/data:/app/data \
+     -v /path/to/local/cookies:/app/cookies \
+     -e BOT_TOKEN="your-telegram-bot-token" \
+     -e ALLOWED_USERS="user_id_1,user_id_2" \
+     -e ADMIN_IDS="admin_id_1" \
+     -e PUBLIC_DOMAIN="yourdomain.com" \
+     -p 8080:8080 \
+     cuhibot
+   ```
 
 ### Local Development & Testing (Windows)
 
@@ -133,9 +143,9 @@ When you double-click or run [run_local.bat](file:///e:/Copyright%20News/cuhibot
 2. **Cloudflare Tunnel Daemon**:
    It launches `cloudflared.exe` in a minimized background daemon window, instructing it to map a temporary public HTTPS tunnel to `http://localhost:8080`.
 3. **Auto-Configuration Parsing (`update_env.py`)**:
-   It starts [update_env.py](file:///e:/Copyright%20News/cuhibot/update_env.py), which reads `tunnel.log`, extracts the randomly generated `*.trycloudflare.com` subdomain, and automatically updates the `RAILWAY_PUBLIC_DOMAIN` variable inside your local `.env`.
+   It starts [update_env.py](file:///e:/Copyright%20News/cuhibot/update_env.py), which reads `tunnel.log`, extracts the randomly generated `*.trycloudflare.com` subdomain, and automatically updates the `PUBLIC_DOMAIN` variable inside your local `.env`.
 4. **Unified Application Startup**:
-   Finally, it launches [bot.py](file:///e:/Copyright%20News/cuhibot/bot.py) in a new terminal. Since `RAILWAY_PUBLIC_DOMAIN` is now set in `.env`, the bot automatically boots the FastAPI backend ([server.py](file:///e:/Copyright%20News/cuhibot/server.py)) inside its own process as a background thread on port `8080` (replicating the production deployment structure).
+   Finally, it launches [bot.py](file:///e:/Copyright%20News/cuhibot/bot.py) in a new terminal. Since `PUBLIC_DOMAIN` is now set in `.env`, the bot automatically boots the FastAPI backend ([server.py](file:///e:/Copyright%20News/cuhibot/server.py)) inside its own process as a background thread on port `8080` (replicating the production deployment structure).
 
 #### 🚀 Quick Start Guide (Local Setup)
 
@@ -161,7 +171,7 @@ When you double-click or run [run_local.bat](file:///e:/Copyright%20News/cuhibot
 | `ADMIN_IDS` | Admin user IDs for `/admin` panel | None |
 | `DATA_ROOT` | Path for archives, history, and user data | `./data` |
 | `COOKIES_ROOT` | Path for cookie storage | `./cookies` |
-| `RAILWAY_PUBLIC_DOMAIN` | Auto-set by Railway for Mini App hosting | Auto |
+| `PUBLIC_DOMAIN` | The public domain (FQDN) for hosting the Mini App backend | None |
 
 ---
 

@@ -6,7 +6,7 @@ Platforms   : Instagram, TikTok, Facebook, X (Twitter)
 Persistence : per-user JSON files with async-safe file locks
 Scheduler   : PTB JobQueue with restart recovery
 Security    : ALLOWED_USERS allowlist, rate limiting, URL validation
-Deploy      : Railway (DATA_ROOT / COOKIES_ROOT persistent volumes)
+Deploy      : Docker / Cloud Hosting (DATA_ROOT / COOKIES_ROOT persistent volumes)
 """
 
 # =============================================================================
@@ -103,12 +103,12 @@ _IO_POOL = ThreadPoolExecutor(max_workers=4)
 TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN")
 
 import server as _server_module
-domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+domain = os.environ.get("PUBLIC_DOMAIN") or os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
 MINI_APP_URL = f"https://{domain}" if domain else ""
 
 def start_mini_app_server():
     if not MINI_APP_URL:
-        logger.warning("RAILWAY_PUBLIC_DOMAIN not set — Mini App skipped")
+        logger.warning("PUBLIC_DOMAIN not set — Mini App skipped")
         return
     try:
         port = int(os.environ.get("PORT", 8080))
@@ -2380,7 +2380,7 @@ def main() -> None:
     start_mini_app_server()
     
     if app.job_queue is not None:
-        # We still keep a slow disk poll as a fallback for Railway volume persistence sync
+        # We still keep a slow disk poll as a fallback for shared volume persistence sync
         app.job_queue.run_repeating(
             poll_miniapp_queue_fallback, interval=30, first=10, name="miniapp_fallback"
         )
@@ -2389,7 +2389,7 @@ def main() -> None:
 
 
 async def poll_miniapp_queue_fallback(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Fallback for Railway disk triggers if queue fails."""
+    """Fallback for disk triggers if queue fails."""
     if MINIAPP_QUEUE is None:
         return
     if not DATA_ROOT.exists(): return

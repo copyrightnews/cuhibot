@@ -7,7 +7,7 @@ LABEL maintainer="sayfalse" \
 
 # ── System dependencies ─────────────────────────────────────────────────────────
 # ffmpeg  : video processing (gallery-dl post-processors)
-# curl    : useful for Railway health-check debugging
+# curl    : useful for health-check debugging
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg curl \
  && rm -rf /var/lib/apt/lists/*
@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY bot.py server.py app.html ./
 
 # ── Runtime ─────────────────────────────────────────────────────────────────────
-# DATA_ROOT and COOKIES_ROOT should be set via environment variables in Railway
+# DATA_ROOT and COOKIES_ROOT should be set via environment variables in production
 # to point at a persistent volume (e.g. /app/data/storage and /app/data/cookies)
 ENV PYTHONUNBUFFERED=1
 
