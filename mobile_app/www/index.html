@@ -910,8 +910,9 @@ function populateAccount() {
 }
 populateAccount();
 
-async function callApi(method, path, body) {
-  const headers = { 'Content-Type': 'application/json' };
+// [FIXED] Shared auth header builder — used by callApi AND syncNativeFiles
+function getAuthHeaders() {
+  const headers = {};
   if (INIT_DATA) {
     if (INIT_DATA.startsWith("Bearer ") || (INIT_DATA.length > 30 && !INIT_DATA.includes(":") && !INIT_DATA.includes("hash="))) {
       headers['Authorization'] = INIT_DATA.startsWith("Bearer ") ? INIT_DATA : `Bearer ${INIT_DATA}`;
@@ -919,6 +920,11 @@ async function callApi(method, path, body) {
       headers['X-Init-Data'] = INIT_DATA;
     }
   }
+  return headers;
+}
+
+async function callApi(method, path, body) {
+  const headers = { 'Content-Type': 'application/json', ...getAuthHeaders() };
   const res = await fetch(API_BASE + path, {
     method,
     headers,
@@ -1059,7 +1065,9 @@ async function updateHomeStats() {
     
   } catch(e) { console.error('Poll error', e); }
   
-  if (isNativeApp) {
+  // [FIXED] Only sync when a download is actually running — prevents
+  // infinite empty polls and duplicate gallery saves from stale server files
+  if (isNativeApp && stats.download_running) {
     syncNativeFiles();
   }
 }
@@ -1131,6 +1139,20 @@ async function initNativePermission() {
   }
 }
 
+// [FIXED] Track already-synced files to prevent duplicate gallery saves
+const _syncedFiles = new Set(JSON.parse(localStorage.getItem('cuhi_synced_files') || '[]'));
+function _markSynced(key) {
+  _syncedFiles.add(key);
+  // Keep only last 2000 entries to prevent unbounded growth
+  if (_syncedFiles.size > 2000) {
+    const arr = Array.from(_syncedFiles);
+    const trimmed = arr.slice(arr.length - 1500);
+    _syncedFiles.clear();
+    trimmed.forEach(k => _syncedFiles.add(k));
+  }
+  localStorage.setItem('cuhi_synced_files', JSON.stringify(Array.from(_syncedFiles)));
+}
+
 async function syncNativeFiles() {
   // Only run inside the native Capacitor Android/iOS container
   if (!window.Capacitor || !window.Capacitor.isNativePlatform || !window.Capacitor.isNativePlatform()) return;
@@ -1159,11 +1181,14 @@ async function syncNativeFiles() {
 
     let saved = 0;
     for (const file of files) {
+      // [FIXED] Build a dedup key from path + size to skip already-synced files
+      const dedupKey = file.path + '::' + file.size;
       try {
+        // [FIXED] Use shared getAuthHeaders() — fixes 401 for session-token users
         const downloadUrl = API_BASE + '/api/files/' + file.path.split('/').map(encodeURIComponent).join('/');
 
         const resp = await fetch(downloadUrl, {
-          headers: { 'X-Init-Data': INIT_DATA }
+          headers: getAuthHeaders()
         });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
 
@@ -1186,60 +1211,67 @@ async function syncNativeFiles() {
         });
 
         // ── Save to device Gallery/Photos ─────────────────────────────────────
-        try {
-          const Media = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Media;
-          if (Media) {
-            const ext = file.path.split('.').pop().toLowerCase();
-            let mime = 'image/jpeg';
-            let isVid = false;
-            if (['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp'].includes(ext)) {
-              mime = 'video/' + (ext === 'mov' ? 'quicktime' : ext);
-              isVid = true;
-            } else if (ext === 'png') {
-              mime = 'image/png';
-            } else if (ext === 'gif') {
-              mime = 'image/gif';
-            } else if (ext === 'webp') {
-              mime = 'image/webp';
-            }
-            const dataUri = `data:${mime};base64,${base64}`;
-
-            // Find or create album 'CuhiBot'
-            let albumId = null;
-            try {
-              const { albums } = await Media.getAlbums();
-              const existing = albums.find(a => a.name.toLowerCase() === 'cuhibot');
-              if (existing) {
-                albumId = existing.identifier;
-              } else {
-                await Media.createAlbum({ name: 'CuhiBot' });
-                const { albums: newAlbums } = await Media.getAlbums();
-                const created = newAlbums.find(a => a.name.toLowerCase() === 'cuhibot');
-                if (created) albumId = created.identifier;
+        // [FIXED] Only save to gallery if not already synced (prevents duplicates)
+        if (!_syncedFiles.has(dedupKey)) {
+          try {
+            const Media = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Media;
+            if (Media) {
+              const ext = file.path.split('.').pop().toLowerCase();
+              let mime = 'image/jpeg';
+              let isVid = false;
+              if (['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp'].includes(ext)) {
+                mime = 'video/' + (ext === 'mov' ? 'quicktime' : ext);
+                isVid = true;
+              } else if (ext === 'png') {
+                mime = 'image/png';
+              } else if (ext === 'gif') {
+                mime = 'image/gif';
+              } else if (ext === 'webp') {
+                mime = 'image/webp';
               }
-            } catch(albumErr) {
-              console.error('Error with album setup', albumErr);
-            }
+              const dataUri = `data:${mime};base64,${base64}`;
 
-            const fileNameNoExt = file.path.split('/').pop().replace(/\.[^/.]+$/, "");
-            const saveOpts = {
-              path: dataUri,
-              fileName: fileNameNoExt
-            };
-            if (albumId) {
-              saveOpts.albumIdentifier = albumId;
-            }
+              // Find or create album 'CuhiBot'
+              let albumId = null;
+              try {
+                const { albums } = await Media.getAlbums();
+                const existing = albums.find(a => a.name.toLowerCase() === 'cuhibot');
+                if (existing) {
+                  albumId = existing.identifier;
+                } else {
+                  await Media.createAlbum({ name: 'CuhiBot' });
+                  const { albums: newAlbums } = await Media.getAlbums();
+                  const created = newAlbums.find(a => a.name.toLowerCase() === 'cuhibot');
+                  if (created) albumId = created.identifier;
+                }
+              } catch(albumErr) {
+                console.error('Error with album setup', albumErr);
+              }
 
-            if (isVid) {
-              await Media.saveVideo(saveOpts);
-            } else {
-              await Media.savePhoto(saveOpts);
+              const fileNameNoExt = file.path.split('/').pop().replace(/\.[^/.]+$/, "");
+              const saveOpts = {
+                path: dataUri,
+                fileName: fileNameNoExt
+              };
+              if (albumId) {
+                saveOpts.albumIdentifier = albumId;
+              }
+
+              if (isVid) {
+                await Media.saveVideo(saveOpts);
+              } else {
+                await Media.savePhoto(saveOpts);
+              }
+              console.log('Successfully saved to device Gallery:', file.path);
             }
-            console.log('Successfully saved to device Gallery:', file.path);
+          } catch(mediaErr) {
+            console.error('Failed to save to device gallery:', file.path, mediaErr);
           }
-        } catch(mediaErr) {
-          console.error('Failed to save to device gallery:', file.path, mediaErr);
         }
+
+        // Mark as synced BEFORE deleting from server — even if DELETE fails,
+        // the file won't be re-saved to gallery on the next sync cycle
+        _markSynced(dedupKey);
 
         // Remove from server only after confirmed local write
         await callApi('DELETE', '/api/files/' + file.path.split('/').map(encodeURIComponent).join('/'));
@@ -1247,6 +1279,15 @@ async function syncNativeFiles() {
 
       } catch(err) {
         console.error('Failed to sync file', file.path, err);
+        // [FIXED] Even if download/save failed, try to delete from server
+        // to prevent infinite retry loops on permanently-broken files
+        if (_syncedFiles.has(dedupKey)) {
+          try {
+            await callApi('DELETE', '/api/files/' + file.path.split('/').map(encodeURIComponent).join('/'));
+          } catch(delErr) {
+            console.error('Cleanup delete also failed', file.path, delErr);
+          }
+        }
       }
     }
 
