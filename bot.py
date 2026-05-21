@@ -1333,6 +1333,13 @@ async def realtime_download(
 
     stderr_buf = bytearray()
     seen: set[Path] = set()
+    if out_dir.exists():
+        for f in out_dir.rglob("*"):
+            if f.is_file():
+                try:
+                    seen.add(f.resolve().absolute())
+                except Exception:
+                    pass
     buffer: list[Path] = []
     sent_count = 0
     downloaded_bytes = 0
@@ -2854,12 +2861,12 @@ async def _run_miniapp_download(
 
     # Map Mini App "mode" string to bot's internal mode string
     mode_map = {
-        "both": "both",
+        "both": "mixed",
         "photos": "photos",
         "videos": "videos",
         "files": "documents",
     }
-    send_as = mode_map.get(mode, "both")
+    send_as = mode_map.get(mode, "mixed")
     client = trigger.get("client", "telegram")
 
     # Determine which platforms to run
