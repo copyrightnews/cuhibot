@@ -1,6 +1,7 @@
 import shutil
 import os
 
+
 def sync_html_files():
     """Synchronize app.html to index.html and mobile_app/www/index.html.
     This ensures the three HTML entry points stay identical.
