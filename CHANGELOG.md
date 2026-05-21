@@ -4,6 +4,17 @@ This is the history of every major fix and feature added to **Cuhi Bot**. We try
 
 ---
 
+## [2.2.0] Release and Final Ecosystem Hardening — 2026-05-22
+
+### Features & Security Realignment
+- **Unified Release v2.2.0**: Aligned both the core Telegram Bot server and the standalone mobile Android app under the clean, synchronized release version `2.2.0`.
+- **Harden Production Security**: Configured the bot to fail-closed by default on unconfigured user lists in production, and updated the recommended execution commands to enforce `-e PRODUCTION=1`.
+- **Lightweight CI and Compilation Smoke Testing**: Added compilation validations (`py_compile`) and automated Docker image build verification steps directly to the GitHub Actions test workflow.
+- **Access Control and Dev Documentation Alignment**: Fixed the user ignore documentation, corrected the UI mirror synchronisation guides in the quickstart instructions, and expanded guidelines for local developers in the contribution checklist.
+- **Repository Hygiene Cleanup**: Purged large internal scaffolding logs and temporary fixing reports, leaving the branch pristine and focused purely on production code.
+
+---
+
 ## [2.1.0] Security Hardening and Deep Audit Bug Fixes — 2026-05-21
 
 ### Security & Architecture Hardening
