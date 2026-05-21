@@ -102,16 +102,17 @@ The ecosystem can be deployed anywhere Python 3.11+ can run (Docker, VPS, Cloud 
    ```
 3. Run the container, ensuring you mount a persistent volume for caching and cookie storage:
    ```bash
-   docker run -d \
-     --name cuhibot \
-     -v /path/to/local/data:/app/data \
-     -v /path/to/local/cookies:/app/cookies \
-     -e BOT_TOKEN="your-telegram-bot-token" \
-     -e ALLOWED_USERS="user_id_1,user_id_2" \
-     -e ADMIN_IDS="admin_id_1" \
-     -e PUBLIC_DOMAIN="yourdomain.com" \
-     -p 8080:8080 \
-     cuhibot
+    docker run -d \
+      --name cuhibot \
+      -v /path/to/local/data:/app/data \
+      -v /path/to/local/cookies:/app/cookies \
+      -e BOT_TOKEN="your-telegram-bot-token" \
+      -e ALLOWED_USERS="user_id_1,user_id_2" \
+      -e ADMIN_IDS="admin_id_1" \
+      -e PUBLIC_DOMAIN="yourdomain.com" \
+      -e PRODUCTION=1 \
+      -p 8080:8080 \
+      cuhibot
    ```
 
 ### Local Development & Testing (Windows)
@@ -170,7 +171,7 @@ When you double-click or run [run_local.bat](file:///e:/Copyright%20News/cuhibot
    - Double-click or run [run_local.bat](file:///e:/Copyright%20News/cuhibot/run_local.bat).
    - Wait 5–10 seconds. The console will print your public Tunnel URL and launch the **Telegram Bot** console.
 3. **Link Mobile/Mini App**:
-   - Execute `npx cap sync` in the `mobile_app/` folder to bundle the updated configuration.
+   - Run `python sync_ui.py` in the root folder, then execute `npx cap sync` in the `mobile_app/` folder to sync the UI assets and bundle the configuration.
    - Run/Compile the project inside **Android Studio** onto your device or emulator. It will automatically connect directly to your local server over the secure tunnel!
 
 ---

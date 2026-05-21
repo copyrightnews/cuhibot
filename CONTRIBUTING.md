@@ -51,11 +51,21 @@ Please follow these steps to have your contribution considered by the maintainer
 1. **Fork** the repository and clone your fork locally.
 2. **Create a branch** for your edits (`git checkout -b feature/amazing-feature` or `bugfix/issue-number`).
 3. **Write code** following our Styleguides (see below).
-4. **Test** your changes locally.
-   ```bash
-   export BOT_TOKEN="your-test-token"
-   python bot.py
-   ```
+4. **Test** your changes locally:
+   - **Local Execution:** Set your Telegram bot token and enable development mode so the bot bypasses the `ALLOWED_USERS` fail-closed check:
+     ```bash
+     export BOT_TOKEN="your-test-token"
+     export ENV="development"  # Bypasses the ALLOWED_USERS check (alternatively set DEV=1)
+     python bot.py
+     ```
+   - **Run Automated Tests:** Run the comprehensive unit test suite to verify code correctness and compatibility:
+     ```bash
+     python -m unittest test_bot.py
+     ```
+   - **UI Synchronization:** If you modified `app.html` (the source of truth for the Mini App UI), execute the synchronization script to propagate your updates across all mirrors before committing, otherwise the CI test will fail:
+     ```bash
+     python sync_ui.py
+     ```
 5. **Commit** your changes using descriptive commit messages.
 6. **Push** your branch to your fork on GitHub.
 7. **Open a Pull Request** against the `main` branch.

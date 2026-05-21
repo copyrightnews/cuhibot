@@ -2753,15 +2753,7 @@ async def _import_sources(uid: int, text: str) -> tuple[int, int]:
     return added, skipped
 
 
-# [FIXED] Moved from line ~2041 to here so handle_callback (which references
-# SCHEDULE_OPTIONS) can always find it at runtime. Python resolves names at
-# call time, but defining it above the function is the correct practice.
-SCHEDULE_OPTIONS = {
-    "6h": 6 * 3600,
-    "12h": 12 * 3600,
-    "24h": 24 * 3600,
-    "off": 0,
-}
+
 
 
 async def _scheduled_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3137,13 +3129,23 @@ def main() -> None:
         import sys
         sys.exit(1)
     if not ALLOWED_USERS:
-        is_prod = os.environ.get("PRODUCTION", "").strip() == "1" or os.environ.get("ENV", "").strip().lower() == "production"
-        if is_prod:
-            logger.critical("CRITICAL: ALLOWED_USERS is empty in production environment! Fails closed for security.")
+        is_dev = (
+            os.environ.get("ENV", "").strip().lower() in ("development", "dev")
+            or os.environ.get("DEV", "").strip() == "1"
+            or os.environ.get("DEBUG", "").strip() == "1"
+            or os.environ.get("SKIP_EMBEDDED_SERVER", "").strip() == "1"
+        )
+        if not is_dev:
+            logger.critical(
+                "CRITICAL: ALLOWED_USERS is empty! Fails closed by default to prevent unauthorized access. "
+                "In development mode, set ENV=development or DEV=1."
+            )
             import sys
             sys.exit(1)
         else:
-            logger.warning("WARNING: ALLOWED_USERS is empty! Anyone can access this bot.")
+            logger.warning(
+                "WARNING: ALLOWED_USERS is empty! Running in development mode, allowing anyone to access this bot."
+            )
     try:
         bootstrap_env_cookies()
     except Exception as e:
@@ -3236,8 +3238,11 @@ async def poll_miniapp_queue_fallback(
     for trigger_file in DATA_ROOT.glob("*/download_trigger.json"):
         try:
             uid = int(trigger_file.parent.name)
-            trigger_data = json.loads(trigger_file.read_text(encoding="utf-8"))
-            trigger_file.unlink(missing_ok=True)
+            with locked_file(trigger_file):
+                if not trigger_file.exists():
+                    continue
+                trigger_data = json.loads(trigger_file.read_text(encoding="utf-8"))
+                trigger_file.unlink(missing_ok=True)
             if uid not in ACTIVE_USERS:
                 await MINIAPP_QUEUE.put(
                     {"type": "download", "uid": uid, "data": trigger_data}
@@ -3252,7 +3257,10 @@ async def poll_miniapp_queue_fallback(
     for stop_file in DATA_ROOT.glob("*/stop_flag"):
         try:
             uid = int(stop_file.parent.name)
-            stop_file.unlink(missing_ok=True)
+            with locked_file(stop_file):
+                if not stop_file.exists():
+                    continue
+                stop_file.unlink(missing_ok=True)
             if uid in ACTIVE_USERS and uid in STOP_EVENTS:
                 STOP_EVENTS[uid].set()
                 logger.info("Fallback STOP triggered for uid=%s", uid)

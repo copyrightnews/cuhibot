@@ -41,7 +41,7 @@ Cuhi Bot is built on the following core security principles:
 When deploying Cuhi Bot, administrators are highly encouraged to utilize the built-in security features to harden their instance:
 
 ### 1. User Allowlists
-Cuhi Bot is NOT a public bot by default. You should configure the `ALLOWED_USERS` environment variable with a comma-separated list of Telegram User IDs. If a user is not on this list, the bot will silently ignore all their messages and block their access to the Mini App dashboard.
+Cuhi Bot is NOT a public bot by default. You should configure the `ALLOWED_USERS` environment variable with a comma-separated list of Telegram User IDs. If a user is not on this list, the bot will actively block their access by replying with an "Access Denied" message on Telegram and restricting access to the Mini App backend/dashboard.
 
 ### 2. Admin System
 The `/admin` panel is restricted via the `ADMIN_IDS` environment variable. Only these users can globally restart the bot, view system metrics, or manage global configurations.
