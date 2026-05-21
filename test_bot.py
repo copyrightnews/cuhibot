@@ -138,5 +138,32 @@ class TestCuhiBot(unittest.TestCase):
         self.assertEqual(cron_map.get("24h"), "0 0 * * *")
         self.assertEqual(cron_map.get("off"), "")
 
+    def test_html_mirrors_sync(self):
+        # Read app.html, index.html, and mobile_app/www/index.html
+        # from the actual repository to check if they are identical.
+        # This acts as a CI check for developer discipline.
+        root = Path(__file__).parent.resolve()
+        app_html = root / "app.html"
+        index_html = root / "index.html"
+        mobile_html = root / "mobile_app" / "www" / "index.html"
+        
+        self.assertTrue(app_html.exists(), "app.html must exist as the source of truth")
+        self.assertTrue(index_html.exists(), "index.html must exist")
+        self.assertTrue(mobile_html.exists(), "mobile_app/www/index.html must exist")
+        
+        app_content = app_html.read_text(encoding="utf-8")
+        index_content = index_html.read_text(encoding="utf-8")
+        mobile_content = mobile_html.read_text(encoding="utf-8")
+        
+        self.assertEqual(app_content, index_content, "index.html has drifted from app.html. Run python sync_ui.py to resolve.")
+        self.assertEqual(app_content, mobile_content, "mobile_app/www/index.html has drifted from app.html. Run python sync_ui.py to resolve.")
+        
+        # Verify logo.jpg sync
+        logo_src = root / "logo.jpg"
+        logo_dest = root / "mobile_app" / "www" / "logo.jpg"
+        if logo_src.exists():
+            self.assertTrue(logo_dest.exists(), "logo.jpg in mobile_app/www/ is missing")
+            self.assertEqual(logo_src.read_bytes(), logo_dest.read_bytes(), "logo.jpg in mobile_app/www/ is out of sync. Run python sync_ui.py to resolve.")
+
 if __name__ == "__main__":
     unittest.main()

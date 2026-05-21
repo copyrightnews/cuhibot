@@ -34,10 +34,23 @@ The Cuhi Mini App is a full-featured dashboard that runs natively inside Telegra
 Cuhi is fully integrated and optimized to run as a native mobile application via Capacitor.
 
 ### Native Mobile Enhancements:
-- **Interactive Google OAuth Selector:** Features a gorgeous, Google-designed Account Selector modal that mimics authentic OAuth flows. Easily switch between cached suggested profiles or add new custom emails seamlessly.
+- **Secure Local Session Authentication:** Integrates seamlessly with your server via Telegram-issued secure `/app` session tokens, eliminating simulated flows or third-party OAuth overhead while keeping configuration private and direct.
 - **Responsive Keyboard Viewport Integration:** Re-engineered with top-aligned flex-start structures and dynamic scroll calculations. When the virtual keyboard is shown, input fields and headers adjust gracefully with zero layout squashing or overlapping glitches.
 - **Lenient Scoped Storage Permission Handlers:** Engineered specifically for modern Android 11+ and 13+ Scoped Storage guidelines. The app requests media permissions but never halts the sync loop if optional gallery permissions are disabled, writing files natively to your device's standard `Documents/Cuhi` folder.
 - **Adaptive Native Settings Panel:** Dynamically hides Telegram-specific forward channels and Cron server schedulers, keeping the mobile interface clean, responsive, and tailored for standalone on-device archival.
+
+### 📋 Release & Synchronisation Checklist
+Before compiling release builds or deploying changes to mobile devices, always execute the UI synchronisation flow to prevent mirror drift:
+1. Make your primary HTML modifications inside `app.html` (the absolute source of truth).
+2. Propagate updates across all web and Capacitor mirror locations:
+   ```bash
+   python sync_ui.py
+   ```
+3. Bundle and compile updated assets for your native Android builds:
+   ```bash
+   npx cap sync
+   ```
+This checklist is automatically enforced in the CI test suite via automated byte-level mirror checks, ensuring that production apps never launch with missing or drifted assets.
 
 ### Features
 
@@ -124,7 +137,7 @@ sequenceDiagram
     CF-->>App: Mobile App receives data/acknowledgment
     
     Note over LocalHost: bot.py queue worker processes the download request
-    LocalHost->>Target: Download media via gallery-dl/yt-dlp
+    LocalHost->>Target: Download media via gallery-dl
     Target-->>LocalHost: Media files saved to local data/{uid}/downloads/
     
     loop Real-time Polling Sync
@@ -144,8 +157,8 @@ When you double-click or run [run_local.bat](file:///e:/Copyright%20News/cuhibot
    It launches `cloudflared.exe` in a minimized background daemon window, instructing it to map a temporary public HTTPS tunnel to `http://localhost:8080`.
 3. **Auto-Configuration Parsing (`update_env.py`)**:
    It starts [update_env.py](file:///e:/Copyright%20News/cuhibot/update_env.py), which reads `tunnel.log`, extracts the randomly generated `*.trycloudflare.com` subdomain, and automatically updates the `PUBLIC_DOMAIN` variable inside your local `.env`.
-4. **Unified Application Startup**:
-   Finally, it launches [bot.py](file:///e:/Copyright%20News/cuhibot/bot.py) in a new terminal. Since `PUBLIC_DOMAIN` is now set in `.env`, the bot automatically boots the FastAPI backend ([server.py](file:///e:/Copyright%20News/cuhibot/server.py)) inside its own process as a background thread on port `8080` (replicating the production deployment structure).
+4. **Decoupled Multi-Process Execution**:
+   Finally, it sets `SKIP_EMBEDDED_SERVER=1` to bypass duplicate server threads and launches the **FastAPI Backend Server** (`server.py`) and the **Telegram Bot** (`bot.py`) in separate independent terminals. Both connect cleanly on port `8080` without thread overlapping or locking conflicts.
 
 #### 🚀 Quick Start Guide (Local Setup)
 
@@ -167,7 +180,7 @@ When you double-click or run [run_local.bat](file:///e:/Copyright%20News/cuhibot
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `BOT_TOKEN` | Telegram bot token from @BotFather | Required |
-| `ALLOWED_USERS` | Comma-separated list of allowed user IDs | All users |
+| `ALLOWED_USERS` | Comma-separated list of allowed user IDs | Required in production (fails closed if empty). Optional in dev (allows all). |
 | `ADMIN_IDS` | Admin user IDs for `/admin` panel | None |
 | `DATA_ROOT` | Path for archives, history, and user data | `./data` |
 | `COOKIES_ROOT` | Path for cookie storage | `./cookies` |

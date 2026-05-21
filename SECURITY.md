@@ -31,8 +31,8 @@ Cuhi Bot is built on the following core security principles:
 1.  **Self-Hosted Privacy:** We do not collect telemetry, user data, or analytics. Your data, cookies, and downloaded media remain entirely on your own server.
 2.  **Least Privilege:** The application runs with the minimum permissions required. We strongly recommend running Cuhi Bot in a Docker container or a dedicated, restricted user account.
 3.  **Strict Isolation:** User data and history files are segregated. A user cannot access or trigger downloads using another user's cookie profile.
-4.  **Data Integrity:** We utilize OS-level file locking (`fcntl` on Unix, `msvcrt` on Windows) to prevent race conditions and file corruption when multiple users access the JSON data stores simultaneously.
-5.  **Input Sanitization:** All URLs passed to the bot via Telegram messages or the Mini App are strictly validated against allow-listed regex patterns before being passed to underlying download engines (`gallery-dl`, `yt-dlp`).
+4.  **Data Integrity:** We utilize cooperative advisory file locking (via `O_CREAT | os.O_EXCL` helper context managers) to prevent race conditions and file corruption when multiple users or processes access the JSON data stores simultaneously.
+5.  **Input Sanitization:** All URLs passed to the bot via Telegram messages or the Mini App are strictly validated against allow-listed regex patterns before being passed to the underlying download engine (`gallery-dl`).
 
 ---
 
@@ -61,7 +61,7 @@ While we secure the codebase, the security of the host environment is your respo
 *   **Keep Secrets Secret:** Never commit your `BOT_TOKEN` or `cookies.txt` files to a public repository. If your token leaks, anyone can control your bot. Revoke it immediately via [@BotFather](https://t.me/BotFather) if compromised.
 *   **Secure Cookie Handling:** Social media cookies are equivalent to passwords. If a malicious actor gains access to your `cookies.txt`, they have full access to your social media accounts. Ensure the directory where cookies are stored (`/app/data/cookies`) has restrictive file permissions.
 *   **Burner Accounts:** We strongly advise using "burner" or secondary social media accounts to generate cookies for Cuhi Bot. Do not use your primary personal accounts, as automated scraping can sometimes trigger anti-bot measures resulting in account suspension.
-*   **Updates:** We regularly update Cuhi Bot to patch underlying dependencies (`gallery-dl`, `yt-dlp`, `python-telegram-bot`, `FastAPI`). Keep your instance up to date to ensure you are protected against upstream vulnerabilities.
+*   **Updates:** We regularly update Cuhi Bot to patch underlying dependencies (`gallery-dl`, `python-telegram-bot`, `FastAPI`). Keep your instance up to date to ensure you are protected against upstream vulnerabilities.
 
 ---
 *Stay safe and keep your archives secure.*

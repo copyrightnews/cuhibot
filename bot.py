@@ -654,7 +654,8 @@ def read_dl_state(uid: int) -> dict:
     if not p.exists():
         return {"running": False, "queued": False, "stop_requested": False}
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        with locked_file(p):
+            return json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return {"running": False, "queued": False, "stop_requested": False}
 
@@ -662,9 +663,10 @@ def read_dl_state(uid: int) -> dict:
 def write_dl_state(uid: int, data: dict) -> None:
     p = dl_state_path(uid)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    tmp.replace(p)
+    with locked_file(p):
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        tmp.replace(p)
 
 
 def clear_dl_state(uid: int) -> None:
@@ -672,18 +674,19 @@ def clear_dl_state(uid: int) -> None:
     p = dl_state_path(uid)
     if p.exists():
         try:
-            s = json.loads(p.read_text(encoding="utf-8"))
-            s.update(
-                {
-                    "running": False,
-                    "queued": False,
-                    "stop_requested": False,
-                    "progress": "Idle",
-                }
-            )
-            tmp = p.with_suffix(".tmp")
-            tmp.write_text(json.dumps(s, indent=2), encoding="utf-8")
-            tmp.replace(p)
+            with locked_file(p):
+                s = json.loads(p.read_text(encoding="utf-8"))
+                s.update(
+                    {
+                        "running": False,
+                        "queued": False,
+                        "stop_requested": False,
+                        "progress": "Idle",
+                    }
+                )
+                tmp = p.with_suffix(".tmp")
+                tmp.write_text(json.dumps(s, indent=2), encoding="utf-8")
+                tmp.replace(p)
         except Exception:
             pass
 
@@ -2547,7 +2550,21 @@ async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_allowed(uid):
         return
     s = await read_settings(uid)
-    current = s.get("schedule", "off")
+    cron = s.get("schedule_cron", "")
+    enabled = s.get("schedule_enabled", False)
+
+    # Map cron back to friendly presets
+    if not enabled:
+        current = "off"
+    elif cron == "0 */6 * * *":
+        current = "6h"
+    elif cron == "0 */12 * * *":
+        current = "12h"
+    elif cron == "0 0 * * *":
+        current = "24h"
+    else:
+        current = "custom"
+
     rows = [
         [
             InlineKeyboardButton(
@@ -2555,11 +2572,16 @@ async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
                 callback_data=f"sched_{k}",
             )
         ]
-        for k in SCHEDULE_OPTIONS
+        for k in ["6h", "12h", "24h", "off"]
     ]
+    
+    custom_text = ""
+    if current == "custom":
+        custom_text = f"\nCustom Cron: `{cron}`"
+
     rows.append([InlineKeyboardButton("🔙 Back", callback_data="m_back")])
     await update.message.reply_text(
-        f"⏰ *Scheduled Download*\n\nCurrent: *{current.upper()}*",
+        f"⏰ *Scheduled Download*\n\nCurrent: *{current.upper()}*{custom_text}",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(rows),
     )
@@ -3115,7 +3137,13 @@ def main() -> None:
         import sys
         sys.exit(1)
     if not ALLOWED_USERS:
-        logger.warning("WARNING: ALLOWED_USERS is empty! Anyone can access this bot.")
+        is_prod = os.environ.get("PRODUCTION", "").strip() == "1" or os.environ.get("ENV", "").strip().lower() == "production"
+        if is_prod:
+            logger.critical("CRITICAL: ALLOWED_USERS is empty in production environment! Fails closed for security.")
+            import sys
+            sys.exit(1)
+        else:
+            logger.warning("WARNING: ALLOWED_USERS is empty! Anyone can access this bot.")
     try:
         bootstrap_env_cookies()
     except Exception as e:

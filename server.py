@@ -452,10 +452,18 @@ if public_domain:
     allowed_origins.append(f"https://{clean_domain}")
     allowed_origins.append(f"http://{clean_domain}")
 
+# Support custom CORS origins via env for production deployments
+cors_custom = os.environ.get("CORS_ALLOWED_ORIGINS", "").strip()
+if cors_custom:
+    for origin in cors_custom.split(","):
+        origin_clean = origin.strip()
+        if origin_clean:
+            allowed_origins.append(origin_clean)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_origin_regex=r"^https://.*\.github\.io$",
+    allow_origin_regex=r"^https://copyrightnews\.github\.io$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
