@@ -3,7 +3,7 @@ FROM python:3.11-slim
 
 LABEL maintainer="sayfalse" \
       description="Cuhi Bot — Telegram media downloader (Instagram/TikTok/Facebook/X)" \
-      version="2.0.2"
+      version="2.1.0"
 
 # ── System dependencies ─────────────────────────────────────────────────────────
 # ffmpeg  : video processing (gallery-dl post-processors)
@@ -18,7 +18,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Application code ────────────────────────────────────────────────────────────
-COPY bot.py server.py app.html ./
+COPY bot.py server.py app.html logo.jpg ./
 
 # ── Runtime ─────────────────────────────────────────────────────────────────────
 # DATA_ROOT and COOKIES_ROOT should be set via environment variables in production

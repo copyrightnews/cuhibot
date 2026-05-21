@@ -15,6 +15,7 @@ import hmac
 import json
 import logging
 import os
+import secrets
 
 # Load .env file manually if exists (no-dependency dotenv fallback supporting multi-line strings)
 try:
@@ -183,8 +184,18 @@ def get_sessions() -> dict:
 
 
 def validate_token(token: str) -> dict | None:
+    if not token or not token.startswith("cuhi_session_token_"):
+        return None
     sessions = get_sessions()
-    return sessions.get(token)
+    session = sessions.get(token)
+    if not session:
+        return None
+    
+    # Expiry validation
+    expires_at = session.get("expires_at", 0)
+    if time.time() > expires_at:
+        return None
+    return session
 
 
 def _validate_init_data(init_data: str) -> dict:
@@ -197,22 +208,12 @@ def _validate_init_data(init_data: str) -> dict:
             status_code=401, detail="Open this app inside Telegram or log in"
         )
 
-    # Native Android App Token bypass: format "UID:HMAC"
-    if ":" in init_data and "hash=" not in init_data:
-        try:
-            uid_str, signature = init_data.split(":", 1)
-            expected = hmac.new(
-                b"AppToken", f"{uid_str}:{BOT_TOKEN}".encode(), hashlib.sha256
-            ).hexdigest()
-            if hmac.compare_digest(expected, signature):
-                return {
-                    "id": int(uid_str),
-                    "first_name": "App User",
-                    "username": "app",
-                }
-        except Exception:
-            pass
-        raise HTTPException(status_code=401, detail="Invalid App Token")
+    # Native Android App Token: secure session token validation
+    if init_data.startswith("cuhi_session_token_"):
+        session = validate_token(init_data)
+        if session:
+            return session
+        raise HTTPException(status_code=401, detail="Invalid or Expired App Token")
 
     parsed = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
     received_hash = parsed.pop("hash", None)
@@ -428,11 +429,34 @@ class ScheduleSet(BaseModel):
 
 
 # ── FastAPI app ───────────────────────────────────────────────────────
+# ── FastAPI app & CORS Configuration ─────────────────────────────────────
 app = FastAPI(docs_url=None, redoc_url=None)
+
+# Build dynamic allowed origins list
+allowed_origins = [
+    "http://localhost",
+    "capacitor://localhost",
+    "http://localhost:5173",
+    "http://localhost:8080",
+    "http://localhost:3000",
+    "http://localhost:5000",
+    "http://localhost:8000"
+]
+
+public_domain = os.environ.get("PUBLIC_DOMAIN", "").strip()
+if public_domain:
+    clean_domain = public_domain
+    if "://" in clean_domain:
+        clean_domain = clean_domain.split("://", 1)[1]
+    clean_domain = clean_domain.rstrip("/")
+    allowed_origins.append(f"https://{clean_domain}")
+    allowed_origins.append(f"http://{clean_domain}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"^https://.*\.github\.io$",
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -551,9 +575,9 @@ async def set_cookie(body: CookieSet, uid: int = Depends(get_uid)):
         raise HTTPException(400, f"Unknown platform: {body.platform}")
     ck_dir = user_cookies_dir(uid)
     ck_dir.mkdir(parents=True, exist_ok=True)
-    (ck_dir / COOKIE_FILE[body.platform]).write_text(
-        body.cookie_data, encoding="utf-8"
-    )
+    ck_path = ck_dir / COOKIE_FILE[body.platform]
+    with locked_file(ck_path):
+        ck_path.write_text(body.cookie_data, encoding="utf-8")
     return {"platform": body.platform, "status": "saved"}
 
 
@@ -562,8 +586,9 @@ async def delete_cookie(platform: str, uid: int = Depends(get_uid)):
     if platform not in COOKIE_FILE:
         raise HTTPException(400, f"Unknown platform: {platform}")
     ck_path = user_cookies_dir(uid) / COOKIE_FILE[platform]
-    if ck_path.exists():
-        ck_path.unlink()
+    with locked_file(ck_path):
+        if ck_path.exists():
+            ck_path.unlink()
     return {"deleted": platform}
 
 
@@ -590,18 +615,20 @@ async def get_channel(uid: int = Depends(get_uid)):
     return {"channel_id": s.get("channel") or s.get("output_channel") or ""}
 
 
-def normalize_chat(value) -> str:
+def normalize_chat(value) -> int | str:
     """Convert user-entered channel strings into valid Telegram chat IDs."""
+    if isinstance(value, int):
+        return value
     v = str(value).strip()
     if v.startswith("@"):
         return v
     if v.lstrip("-").isdigit():
         n = int(v)
         if n < 0:
-            return str(n)
+            return n
         if n > 5000000000:
-            return str(n)
-        return f"-100{n}"
+            return n
+        return int(f"-100{n}")
     return v
 
 
@@ -652,7 +679,9 @@ async def trigger_download(body: DownloadTrigger, uid: int = Depends(get_uid)):
     write_json(trigger_path, trigger)
 
     # Also write running flag
-    (user_dir(uid) / "download_running").touch()
+    running_flag = user_dir(uid) / "download_running"
+    with locked_file(running_flag):
+        running_flag.touch()
 
     return {"status": "triggered"}
 
@@ -660,19 +689,24 @@ async def trigger_download(body: DownloadTrigger, uid: int = Depends(get_uid)):
 @app.post("/api/download/stop")
 async def stop_download(uid: int = Depends(get_uid)):
     # Write stop flag — bot.py checks this
-    (user_dir(uid) / "stop_flag").touch()
+    stop_flag = user_dir(uid) / "stop_flag"
+    with locked_file(stop_flag):
+        stop_flag.touch()
 
     # Remove running flag
     running_flag = user_dir(uid) / "download_running"
-    if running_flag.exists():
-        running_flag.unlink()
+    with locked_file(running_flag):
+        if running_flag.exists():
+            running_flag.unlink()
 
     return {"status": "stopped"}
 
 
 @app.get("/api/download/status")
 async def download_status(uid: int = Depends(get_uid)):
-    flag_running = (user_dir(uid) / "download_running").exists()
+    running_flag = user_dir(uid) / "download_running"
+    with locked_file(running_flag):
+        flag_running = running_flag.exists()
     return {"running": flag_running}
 
 
@@ -797,9 +831,17 @@ if DATA_ROOT.exists():
 
 def start(port: int = 8080):
     """Called from bot.py background thread."""
+    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN":
+        log.critical("CRITICAL: BOT_TOKEN is unset, empty, or set to placeholder!")
+        import sys
+        sys.exit("CRITICAL ERROR: BOT_TOKEN must be configured. Exiting.")
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
 
 
 if __name__ == "__main__":
+    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN":
+        log.critical("CRITICAL: BOT_TOKEN is unset, empty, or set to placeholder!")
+        import sys
+        sys.exit("CRITICAL ERROR: BOT_TOKEN must be configured. Exiting.")
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")

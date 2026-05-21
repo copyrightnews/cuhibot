@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cuhi Bot v2.0.3 — hotfix: Android Capacitor fix, async queue init, stop-button IPC, disk cleanup.
+Cuhi Bot v2.1.0 — Stable Release — Production Hardened
 
 Platforms   : Instagram, TikTok, Facebook, X (Twitter)
 Persistence : per-user JSON files with async-safe file locks
@@ -614,15 +614,7 @@ async def add_sent_files(uid: int, count: int) -> None:
 
 async def total_downloaded_mb(uid: int) -> float:
     s = await read_settings(uid)
-    base_mb = s.get("downloaded_mb", 0.0)
-
-    def _get_current():
-        return folder_mb(udir(uid) / "downloads")
-
-    current_dl_mb = await asyncio.get_running_loop().run_in_executor(
-        _IO_POOL, _get_current
-    )
-    return round(base_mb + current_dl_mb, 1)
+    return round(s.get("downloaded_mb", 0.0), 1)
 
 
 def _add_downloaded_bytes_sync(uid: int, nbytes: int) -> None:
@@ -1802,6 +1794,22 @@ async def _answer(q) -> None:
         pass
 
 
+def _write_session_sync(app_token: str, session_data: dict) -> None:
+    sessions_file = DATA_ROOT / "sessions.json"
+    sessions_file.parent.mkdir(parents=True, exist_ok=True)
+    with locked_file(sessions_file):
+        sessions = {}
+        if sessions_file.exists():
+            try:
+                sessions = json.loads(sessions_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        sessions[app_token] = session_data
+        sessions_file.write_text(
+            json.dumps(sessions, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+
+
 async def cmd_app(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Generate a login token for the standalone Android App."""
     if not update.message or not update.effective_user:
@@ -1810,10 +1818,21 @@ async def cmd_app(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if ALLOWED_USERS and uid not in ALLOWED_USERS and uid not in ADMIN_IDS:
         return
 
-    signature = hmac.new(
-        b"AppToken", f"{uid}:{TOKEN}".encode(), hashlib.sha256
-    ).hexdigest()
-    app_token = f"{uid}:{signature}"
+    import secrets
+    token_hex = secrets.token_hex(32)
+    app_token = f"cuhi_session_token_{token_hex}"
+    expires_at = time.time() + (30 * 24 * 60 * 60)  # 30 days
+
+    session_data = {
+        "id": uid,
+        "first_name": update.effective_user.first_name or "App User",
+        "username": update.effective_user.username or "app",
+        "expires_at": expires_at
+    }
+
+    await asyncio.get_running_loop().run_in_executor(
+        _IO_POOL, _write_session_sync, app_token, session_data
+    )
 
     text = (
         "📱 *Android App Login*\n\n"
@@ -2272,7 +2291,7 @@ async def handle_callback(
         freed = await asyncio.to_thread(wipe_downloads, uid)
         # [FIXED] Edit current message instead of replying to avoid clutter
         await q.message.edit_text(
-            f"🗑️ *Cleanup Complete*\n\nFreed: `{freed} MB`\nStats have been reset.",
+            f"🗑️ *Cleanup Complete*\n\nFreed: `{freed} MB`\nDownload cache has been cleared.",
             parse_mode="Markdown",
             reply_markup=kb_back(),
         )
@@ -2280,7 +2299,21 @@ async def handle_callback(
 
     if data == "m_schedule":
         s = await read_settings(uid)
-        current = s.get("schedule", "off")
+        cron = s.get("schedule_cron", "")
+        enabled = s.get("schedule_enabled", False)
+
+        # Map cron back to friendly presets
+        if not enabled:
+            current = "off"
+        elif cron == "0 */6 * * *":
+            current = "6h"
+        elif cron == "0 */12 * * *":
+            current = "12h"
+        elif cron == "0 0 * * *":
+            current = "24h"
+        else:
+            current = "custom"
+
         rows = [
             [
                 InlineKeyboardButton(
@@ -2288,44 +2321,48 @@ async def handle_callback(
                     callback_data=f"sched_{k}",
                 )
             ]
-            for k in SCHEDULE_OPTIONS
+            for k in ["6h", "12h", "24h", "off"]
         ]
+        
+        custom_text = ""
+        if current == "custom":
+            custom_text = f"\nCustom Cron: `{cron}`"
+
         rows.append([InlineKeyboardButton("🔙 Back", callback_data="m_back")])
         await q.message.edit_text(
-            f"⏰ *Scheduled Download*\n\nCurrent: *{current.upper()}*",
+            f"⏰ *Scheduled Download*\n\nCurrent: *{current.upper()}*{custom_text}",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(rows),
         )
         return
 
     if data.startswith("sched_"):
-        interval_key = data[6:]
-        job_name = f"schedule_{uid}"
-        for job in ctx.application.job_queue.get_jobs_by_name(job_name):
-            job.schedule_removal()
+        preset = data[6:]
+        cron_map = {
+            "6h": "0 */6 * * *",
+            "12h": "0 */12 * * *",
+            "24h": "0 0 * * *",
+            "off": "",
+        }
+        cron_expr = cron_map.get(preset, "")
+        enabled = (preset != "off")
+
         s = await read_settings(uid)
+        s.pop("schedule", None)  # Clear legacy schedule key to avoid conflicts
         s.update(
             {
-                "schedule": interval_key,
+                "schedule_cron": cron_expr,
+                "schedule_enabled": enabled,
                 "schedule_chat_id": q.message.chat_id,
                 "schedule_uname": uname,
                 "schedule_name": name,
             }
         )
         await write_settings(uid, s)
-        if interval_key != "off":
-            ctx.application.job_queue.run_repeating(
-                _scheduled_job,
-                interval=SCHEDULE_OPTIONS[interval_key],
-                first=SCHEDULE_OPTIONS[interval_key],
-                name=job_name,
-                data={
-                    "uid": uid,
-                    "chat_id": q.message.chat_id,
-                    "uname": uname,
-                    "name": name,
-                },
-            )
+        
+        # Trigger dynamic reschedule
+        await sync_user_schedule(ctx.application, uid)
+
         await send_menu(q.message, uid, uname, name)
         return
 
@@ -2758,21 +2795,27 @@ async def sync_user_schedule(app: Application, uid: int) -> None:
         s = await read_settings(uid)
         job_name = f"schedule_{uid}"
 
-        # Compute active / desired schedule configuration
-        desired_type = None  # None, "interval", or "cron"
-        desired_val = None
+        # Unify under schedule_cron and schedule_enabled
+        enabled = s.get("schedule_enabled", False)
+        cron_expr = s.get("schedule_cron", "").strip()
 
-        interval_key = s.get("schedule", "off")
-        if interval_key != "off" and interval_key in SCHEDULE_OPTIONS:
-            desired_type = "interval"
-            desired_val = interval_key
-        elif s.get("schedule_enabled") and s.get("schedule_cron"):
-            desired_type = "cron"
-            desired_val = s.get("schedule_cron")
+        # Check if legacy key is present, if so, migrate it
+        legacy_interval = s.pop("schedule", None)
+        if legacy_interval and legacy_interval != "off" and not cron_expr:
+            cron_map = {
+                "6h": "0 */6 * * *",
+                "12h": "0 */12 * * *",
+                "24h": "0 0 * * *",
+            }
+            cron_expr = cron_map.get(legacy_interval, "")
+            enabled = True
+            s["schedule_cron"] = cron_expr
+            s["schedule_enabled"] = enabled
+            await write_settings(uid, s)
 
         global _SCHEDULE_CACHE
         current_cache = _SCHEDULE_CACHE.get(uid)
-        desired_sig = (desired_type, desired_val)
+        desired_sig = (enabled, cron_expr)
 
         if current_cache == desired_sig:
             return  # No change
@@ -2787,25 +2830,8 @@ async def sync_user_schedule(app: Application, uid: int) -> None:
         if not app.job_queue:
             return
 
-        if desired_type == "interval":
-            interval = SCHEDULE_OPTIONS[desired_val]
-            app.job_queue.run_repeating(
-                _scheduled_job,
-                interval=interval,
-                first=interval,
-                name=job_name,
-                data={
-                    "uid": uid,
-                    "chat_id": s.get("schedule_chat_id") or uid,
-                    "uname": s.get("schedule_uname", "user"),
-                    "name": s.get("schedule_name", "User"),
-                },
-            )
-            logger.info(
-                "Interval schedule updated for user %s: %s", uid, desired_val
-            )
-        elif desired_type == "cron":
-            fields = desired_val.strip().split()
+        if enabled and cron_expr:
+            fields = cron_expr.split()
             if len(fields) == 5:
                 minute, hour, day, month, day_of_week = fields
                 app.job_queue.run_cron(
@@ -2824,7 +2850,7 @@ async def sync_user_schedule(app: Application, uid: int) -> None:
                     },
                 )
                 logger.info(
-                    "Cron schedule updated for user %s: %s", uid, desired_val
+                    "Cron schedule updated for user %s: %s", uid, cron_expr
                 )
 
         _SCHEDULE_CACHE[uid] = desired_sig
@@ -3016,10 +3042,13 @@ async def poll_miniapp_queue_loop(app: Application) -> None:
                 for trigger_file in DATA_ROOT.glob("*/download_trigger.json"):
                     try:
                         uid = int(trigger_file.parent.name)
-                        trigger_data = json.loads(
-                            trigger_file.read_text(encoding="utf-8")
-                        )
-                        trigger_file.unlink(missing_ok=True)
+                        with locked_file(trigger_file):
+                            if not trigger_file.exists():
+                                continue
+                            trigger_data = json.loads(
+                                trigger_file.read_text(encoding="utf-8")
+                            )
+                            trigger_file.unlink(missing_ok=True)
                         if uid not in ACTIVE_USERS:
                             await MINIAPP_QUEUE.put(
                                 {
@@ -3035,7 +3064,10 @@ async def poll_miniapp_queue_loop(app: Application) -> None:
                 for stop_file in DATA_ROOT.glob("*/stop_flag"):
                     try:
                         uid = int(stop_file.parent.name)
-                        stop_file.unlink(missing_ok=True)
+                        with locked_file(stop_file):
+                            if not stop_file.exists():
+                                continue
+                            stop_file.unlink(missing_ok=True)
                         if uid in ACTIVE_USERS and uid in STOP_EVENTS:
                             STOP_EVENTS[uid].set()
                             logger.info(
@@ -3078,8 +3110,12 @@ async def _combined_post_init(application: Application) -> None:
 
 
 def main() -> None:
-    if TOKEN == "YOUR_BOT_TOKEN":
-        return
+    if not TOKEN or TOKEN == "YOUR_BOT_TOKEN":
+        logger.critical("CRITICAL: BOT_TOKEN is missing, empty, or set to placeholder!")
+        import sys
+        sys.exit(1)
+    if not ALLOWED_USERS:
+        logger.warning("WARNING: ALLOWED_USERS is empty! Anyone can access this bot.")
     try:
         bootstrap_env_cookies()
     except Exception as e:

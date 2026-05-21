@@ -51,7 +51,6 @@ docker-compose.override.yml
 ehthumbs.db
 
 # ── Android / Capacitor ────────────────────────────────────────────────────────
-mobile_app/www/
 mobile_app/android/.gradle/
 mobile_app/android/build/
 mobile_app/android/app/build/

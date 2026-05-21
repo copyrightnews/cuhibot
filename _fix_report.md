@@ -377,3 +377,33 @@ permanently blocking future sync attempts for the session.
 ### Mi-2 — `SCHEDULE_OPTIONS` defined after `handle_callback` (bot.py:2041→2050)
 **Fix:** Moved above `_scheduled_job`. Python resolves names at call time so this was a
 runtime-safe issue, but it is now correctly placed above all its uses.
+
+
+## Comprehensive Security Hardening & Hygiene Audit Session (2026-05-21)
+**Model:** Antigravity
+**Files Audited:** `server.py`, `bot.py`
+
+---
+
+## BUGS FOUND: 13  (CRITICAL: 4 | MODERATE: 6 | MINOR: 3)
+## BUGS FIXED: 0
+## VERIFIED: NO
+## REMAINING: [All 13 bugs listed in Audit Details]
+
+---
+
+## Audit Details
+[CRITICAL] Line 201 of server.py — root cause: stateless `uid:HMAC` signature validation based on shared BOT_TOKEN is highly insecure and can be forged if the token leaks.
+[CRITICAL] Line 435 of server.py — root cause: Open CORS configured with wildcard allow_origins=["*"] allows any malicious origin to invoke backend API endpoints.
+[CRITICAL] Line 2765 of bot.py — root cause: Parallel interval and cron schedules conflict, with sync preferring interval over cron.
+[CRITICAL] Line 1813 of bot.py — root cause: Stateless `uid:HMAC` signature generated for /app is cryptographically weak and has no expiration or server-side binding.
+[MODERATE] Line 554 of server.py — root cause: Cookie set endpoint POST /api/cookies writes files directly without cooperative advisory file locks.
+[MODERATE] Line 566 of server.py — root cause: Cookie delete endpoint DELETE /api/cookies unlinks files directly without cooperative advisory file locks.
+[MODERATE] Line 92 of server.py — root cause: BOT_TOKEN is read from environment without checking if it is empty or set to placeholder on startup.
+[MODERATE] Line 3016 of bot.py — root cause: download_trigger.json read and unlink inside poll loop is done without cooperative advisory file locks.
+[MODERATE] Line 3035 of bot.py — root cause: stop_flag unlink inside poll loop is done without cooperative advisory file locks.
+[MODERATE] Line 1827 of bot.py — root cause: Startup lacks validation and early termination if the BOT_TOKEN is empty or matches placeholder.
+[MINOR] Line 593 of server.py — root cause: normalize_chat always returns str, causing a type mismatch with bot.py which returns int | str.
+[MINOR] Line 2275 of bot.py — root cause: m_cleanup callback tells users "Stats have been reset." when lifetime statistics are actually preserved in settings.json.
+[MINOR] Line 625 of bot.py — root cause: total_downloaded_mb sums settings downloaded_mb and current downloads/ folder size, causing double-counting.
+
