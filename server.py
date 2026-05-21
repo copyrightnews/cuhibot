@@ -293,23 +293,11 @@ def user_cookies_dir(uid: int) -> Path:
 
 
 def read_json(path: Path, default=None):
-    if default is None:
-        default = {}
-    try:
-        with locked_file(path):
-            if path.exists():
-                return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        pass
-    return default
+    return read_json_direct(path, default)
 
 
 def write_json(path: Path, data):
-    with locked_file(path):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+    return write_json_direct(path, data)
 
 
 def read_profiles(uid: int, platform: str) -> list[str]:
@@ -487,6 +475,11 @@ async def serve_logo():
     if not logo.exists():
         raise HTTPException(404, "logo.jpg not found")
     return FileResponse(logo, media_type="image/jpeg")
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok"}
 
 
 # ── Stats ─────────────────────────────────────────────────────────────
@@ -672,23 +665,22 @@ async def set_schedule(body: ScheduleSet, uid: int = Depends(get_uid)):
 
 @app.post("/api/download")
 async def trigger_download(body: DownloadTrigger, uid: int = Depends(get_uid)):
-    if (user_dir(uid) / "download_running").exists():
-        raise HTTPException(409, "Download already running")
-
-    # Write trigger file — bot.py polls this and starts the actual download
-    trigger = {
-        "media_type": body.media_type,
-        "force": body.force,
-        "stories": body.stories,
-        "highlights": body.highlights,
-        "client": body.client,
-    }
-    trigger_path = user_dir(uid) / "download_trigger.json"
-    write_json(trigger_path, trigger)
-
-    # Also write running flag
     running_flag = user_dir(uid) / "download_running"
     with locked_file(running_flag):
+        if running_flag.exists():
+            raise HTTPException(409, "Download already running")
+
+        # Write trigger file — bot.py polls this and starts the actual download
+        trigger = {
+            "media_type": body.media_type,
+            "force": body.force,
+            "stories": body.stories,
+            "highlights": body.highlights,
+            "client": body.client,
+        }
+        trigger_path = user_dir(uid) / "download_trigger.json"
+        write_json(trigger_path, trigger)
+
         running_flag.touch()
 
     return {"status": "triggered"}

@@ -53,6 +53,9 @@ class TestCuhiBot(unittest.TestCase):
         
         # Test negative integer strings should be preserved as int
         self.assertEqual(bot.normalize_chat("-100123456"), -100123456)
+        
+        # Test positive digits exceeding 5000000000 should be returned as is (branch coverage)
+        self.assertEqual(bot.normalize_chat("5000000001"), 5000000001)
 
     def test_handle_from_url(self):
         # Test Facebook profile ID formats

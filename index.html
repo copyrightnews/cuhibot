@@ -995,8 +995,11 @@ let activePage = 'home';
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     stopAllPolling();
-  } else if (activePage === 'home') {
-    startHomePolling();
+  } else {
+    updateHomeStats();
+    if (activePage === 'home') {
+      startHomePolling();
+    }
   }
 });
 
@@ -1091,12 +1094,43 @@ async function submitTokenLogin() {
   const url = document.getElementById('login-url').value.trim();
   const token = document.getElementById('login-token').value.trim();
   if (!url || !token) return showToast('⚠️ Both Server URL and App Token are required');
+  // Simple token format validation (alphanumeric, 10+ characters)
+  if (!/^[A-Za-z0-9_-]{10,}$/.test(token)) return showToast('⚠️ Invalid token format');
   
-  localStorage.setItem('cuhi_api_url', url.replace(/\/$/, ''));
-  localStorage.setItem('cuhi_app_token', token);
-  showToast('✅ Mobile token configured successfully');
-  (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('success'));
-  setTimeout(() => window.location.reload(), 800);
+  const normalizedUrl = url.replace(/\/$/, '');
+  showToast('⏳ Validating token with server...');
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (token.startsWith("Bearer ") || (token.length > 30 && !token.includes(":") && !token.includes("hash="))) {
+      headers['Authorization'] = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+    } else {
+      headers['X-Init-Data'] = token;
+    }
+
+    const res = await fetch(`${normalizedUrl}/api/stats`, {
+      method: 'GET',
+      headers: headers
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({detail: `Error ${res.status}`}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+
+    const stats = await res.json();
+    if (!stats || typeof stats !== 'object') {
+      throw new Error('Invalid response structure');
+    }
+
+    localStorage.setItem('cuhi_api_url', normalizedUrl);
+    localStorage.setItem('cuhi_app_token', token);
+    showToast('✅ Mobile token configured successfully');
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('success'));
+    setTimeout(() => window.location.reload(), 800);
+  } catch (err) {
+    showToast(`❌ Connection failed: ${err.message || err}`);
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('error'));
+  }
 }
 
 function logoutApp() {
@@ -1287,6 +1321,11 @@ function getPlatformBadge(p) {
   const color = colors[p] || '#8e8e93';
   return `<span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:${color}; margin-right:6px;"></span>`;
 }
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
 
 // ── Polling Logic ────────────────────────────────────────────────────
 let homePollTmr;
@@ -1336,7 +1375,7 @@ async function updateHomeStats() {
     const acctName = document.getElementById('account-name');
     const acctId = document.getElementById('account-id');
     if (stats.username) {
-      acctName.textContent = stats.name || stats.username;
+      acctName.textContent = stats.first_name || stats.username;
       acctId.textContent = '@' + stats.username;
     }
     
@@ -1354,15 +1393,15 @@ async function updateHomeStats() {
     document.getElementById('disk-used').textContent = disk.used_gb + ' GB used';
     document.getElementById('disk-free').textContent = disk.free_gb + ' GB free';
     
+    // [FIXED] Sync if download is running OR if there are files waiting on the server.
+    // This guarantees all files are saved to the device even after the download ceases,
+    // and recovers unsynced files when the app is restarted.
+    if (isNativeApp && stats && (stats.download_running || (stats.files_waiting && stats.files_waiting > 0))) {
+      syncNativeFiles();
+    }
   } catch(e) { console.error('Poll error', e); }
-  
-  // [FIXED] Sync if download is running OR if there are files waiting on the server.
-  // This guarantees all files are saved to the device even after the download ceases,
-  // and recovers unsynced files when the app is restarted.
-  if (isNativeApp && (stats.download_running || (stats.files_waiting && stats.files_waiting > 0))) {
-    syncNativeFiles();
-  }
 }
+// Duplicate visibilitychange listener removed; functionality covered by primary visibility listener.
 
 let isSyncing = false;
 let _syncPollTmr = null;
@@ -1704,7 +1743,7 @@ async function loadSources() {
     container.innerHTML = sources.map(s => `
       <div class="cell">
         <div class="cell-body" style="padding-right: 12px;">
-          <div class="cell-label" style="font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight: 500;">${s.url}</div>
+          <div class="cell-label" style="font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight: 500;">${escapeHtml(s.url)}</div>
           <div class="cell-sub" style="display:flex; align-items:center;">${getPlatformBadge(s.platform)}${(s.platform || 'unknown').charAt(0).toUpperCase() + (s.platform || 'unknown').slice(1)}</div>
         </div>
         <button class="remove-btn" onclick="deleteSource('${s.platform}', '${encodeURIComponent(s.url)}')">Remove</button>
@@ -1897,11 +1936,7 @@ startHomePolling();
 })();
 
 // Re-check permission when app regains focus (user may have granted it in Settings)
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && isNativeApp) {
-    syncNativeFiles();
-  }
-});
+// Duplicate visibilitychange listener removed; functionality covered by earlier handler.
 </script>
 </body>
 </html>

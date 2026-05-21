@@ -995,8 +995,11 @@ let activePage = 'home';
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     stopAllPolling();
-  } else if (activePage === 'home') {
-    startHomePolling();
+  } else {
+    updateHomeStats();
+    if (activePage === 'home') {
+      startHomePolling();
+    }
   }
 });
 
@@ -1094,11 +1097,40 @@ async function submitTokenLogin() {
   // Simple token format validation (alphanumeric, 10+ characters)
   if (!/^[A-Za-z0-9_-]{10,}$/.test(token)) return showToast('⚠️ Invalid token format');
   
-  localStorage.setItem('cuhi_api_url', url.replace(/\/$/, ''));
-  localStorage.setItem('cuhi_app_token', token);
-  showToast('✅ Mobile token configured successfully');
-  (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('success'));
-  setTimeout(() => window.location.reload(), 800);
+  const normalizedUrl = url.replace(/\/$/, '');
+  showToast('⏳ Validating token with server...');
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (token.startsWith("Bearer ") || (token.length > 30 && !token.includes(":") && !token.includes("hash="))) {
+      headers['Authorization'] = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+    } else {
+      headers['X-Init-Data'] = token;
+    }
+
+    const res = await fetch(`${normalizedUrl}/api/stats`, {
+      method: 'GET',
+      headers: headers
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({detail: `Error ${res.status}`}));
+      throw new Error(err.detail || `HTTP ${res.status}`);
+    }
+
+    const stats = await res.json();
+    if (!stats || typeof stats !== 'object') {
+      throw new Error('Invalid response structure');
+    }
+
+    localStorage.setItem('cuhi_api_url', normalizedUrl);
+    localStorage.setItem('cuhi_app_token', token);
+    showToast('✅ Mobile token configured successfully');
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('success'));
+    setTimeout(() => window.location.reload(), 800);
+  } catch (err) {
+    showToast(`❌ Connection failed: ${err.message || err}`);
+    (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('error'));
+  }
 }
 
 function logoutApp() {
@@ -1369,12 +1401,7 @@ async function updateHomeStats() {
     }
   } catch(e) { console.error('Poll error', e); }
 }
-
-document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === 'visible') {
-    updateHomeStats();
-  }
-});
+// Duplicate visibilitychange listener removed; functionality covered by primary visibility listener.
 
 let isSyncing = false;
 let _syncPollTmr = null;

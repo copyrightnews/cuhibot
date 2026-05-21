@@ -551,16 +551,19 @@ async def total_profiles(uid: int) -> int:
     return sum(len(r) for r in results)
 
 
-async def cookie_summary(uid: int) -> str:
+def _cookie_summary_sync(uid: int) -> str:
     ok = []
     for p in PLATFORMS:
         _, cookie_name, _ = PLATFORMS[p]
         user_c = cdir(uid) / cookie_name
         global_c = global_cookie_dir() / cookie_name
-        # Simple existence checks are fast enough for the loop
         if user_c.exists() or global_c.exists():
             ok.append(p)
     return ", ".join(ok) if ok else "none"
+
+
+async def cookie_summary(uid: int) -> str:
+    return await asyncio.to_thread(_cookie_summary_sync, uid)
 
 
 def _total_sent_sync(uid: int) -> int:
@@ -698,6 +701,10 @@ def clear_dl_state(uid: int) -> None:
 _URL_RE = re.compile(r"^https?://\S+$", re.IGNORECASE)
 
 
+def get_url_hash(url: str) -> str:
+    return hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
+
+
 def validate_url(url: str, platform: str) -> tuple[bool, str]:
     """Ensure input is both well-formed AND on the correct platform domain."""
     if len(url) > MAX_URL_LENGTH:
@@ -720,20 +727,7 @@ def validate_url(url: str, platform: str) -> tuple[bool, str]:
 
 
 def normalize_chat(value) -> int | str:
-    """Convert user-entered channel strings into valid Telegram chat IDs."""
-    if isinstance(value, int):
-        return value
-    v = str(value).strip()
-    if v.startswith("@"):
-        return v
-    if v.lstrip("-").isdigit():
-        n = int(v)
-        if n < 0:
-            return n
-        if n > 5000000000:
-            return n
-        return int(f"-100{n}")
-    return v
+    return _server_module.normalize_chat(value)
 
 
 def handle_from_url(url: str) -> str:
@@ -877,6 +871,7 @@ async def render_menu(uid: int, username: str, name: str) -> str:
         stats_val = f"{cached} MB"
 
     t_prof = await total_profiles(uid)
+    badge = "👑 Admin Account" if uid in ADMIN_IDS else "🤍 Free Account"
 
     return (
         "Cuhi Bot — @copyrightnews\n"
@@ -898,7 +893,7 @@ async def render_menu(uid: int, username: str, name: str) -> str:
         "━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"@{safe_username}, {safe_name}\n"
         f"👤 ID: `{uid}`\n"
-        "🤍 Free Account\n"
+        f"{badge}\n"
         f"🎭 Sources: {t_prof}\n"
         f"📊 Your Stats: {stats_val}"
     )
@@ -1669,7 +1664,10 @@ async def do_download(
         await status.set(final, force=True)
     finally:
         _release(uid, stop)
-        await asyncio.to_thread(wipe_downloads, uid)
+        try:
+            await asyncio.to_thread(wipe_downloads, uid)
+        except Exception as e:
+            logger.exception("Failed to wipe downloads for uid=%s: %s", uid, e)
         await send_menu(msg, uid, uname, name)
 
 
@@ -1729,7 +1727,10 @@ async def do_special_download(
             await status.set(f"✅ *Done!* {n} file(s) sent.", force=True)
     finally:
         _release(uid, stop)
-        await asyncio.to_thread(wipe_downloads, uid)
+        try:
+            await asyncio.to_thread(wipe_downloads, uid)
+        except Exception as e:
+            logger.exception("Failed to wipe downloads for uid=%s: %s", uid, e)
         await send_menu(msg, uid, uname, name)
 
 
@@ -2131,10 +2132,10 @@ async def handle_callback(
         rows = [
             [
                 InlineKeyboardButton(
-                    f"❌ {u[:60]}", callback_data=f"del_{platform}_{i}"
+                    f"❌ {u[:60]}", callback_data=f"del_{platform}_{get_url_hash(u)}"
                 )
             ]
-            for i, u in enumerate(urls[:30])
+            for u in urls[:30]
         ]
         rows.append([InlineKeyboardButton("🔙 Back", callback_data="m_back")])
         await q.message.edit_text(
@@ -2149,15 +2150,14 @@ async def handle_callback(
         if len(parts) < 3:
             return
         platform = parts[1]
-        try:
-            idx = int(parts[2])
-        except (ValueError, TypeError):
-            return
+        target_hash = parts[2]
         removed_container = []
 
         def _remove(current: list[str]) -> list[str]:
-            if 0 <= idx < len(current):
-                removed_container.append(current.pop(idx))
+            for i, u in enumerate(current):
+                if get_url_hash(u) == target_hash:
+                    removed_container.append(current.pop(i))
+                    break
             return current
 
         await atomic_edit_profiles(uid, platform, _remove)
@@ -2682,7 +2682,10 @@ async def cmd_link(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             )
         finally:
             _release(uid, stop)
-            await asyncio.to_thread(wipe_downloads, uid)
+            try:
+                await asyncio.to_thread(wipe_downloads, uid)
+            except Exception as e:
+                logger.exception("Failed to wipe downloads for uid=%s: %s", uid, e)
             await send_menu(update.message, uid, uname, name)
 
     task = asyncio.create_task(_do_link(ev))
@@ -2739,9 +2742,9 @@ async def _import_sources(uid: int, text: str) -> tuple[int, int]:
             skipped += 1
     for plat, new_urls in pending.items():
 
-        def _merge(current: list[str]) -> list[str]:
+        def _merge(current: list[str], urls=new_urls) -> list[str]:
             nonlocal added, skipped
-            for url in new_urls:
+            for url in urls:
                 if url in current or len(current) >= MAX_PROFILES_PER_PLATFORM:
                     skipped += 1
                 else:
@@ -2800,7 +2803,10 @@ async def _scheduled_job(ctx: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("Job failed")
     finally:
         _release(uid, ev)
-        await asyncio.to_thread(wipe_downloads, uid)
+        try:
+            await asyncio.to_thread(wipe_downloads, uid)
+        except Exception as e:
+            logger.exception("Failed to wipe downloads for uid=%s: %s", uid, e)
 
 
 async def sync_user_schedule(app: Application, uid: int) -> None:
@@ -3002,7 +3008,10 @@ async def _run_miniapp_download(
         # run. Android clients need files to persist (served via /api/files endpoint).
         # Without this, the server disk fills up silently on every Mini App run.
         if client != "android":
-            await asyncio.to_thread(wipe_downloads, uid)
+            try:
+                await asyncio.to_thread(wipe_downloads, uid)
+            except Exception as e:
+                logger.exception("Failed to wipe downloads for uid=%s: %s", uid, e)
 
 
 async def miniapp_queue_worker(bot) -> None:
@@ -3123,6 +3132,49 @@ async def _combined_post_init(application: Application) -> None:
     loop_task.add_done_callback(_TASKS.discard)
 
 
+async def poll_miniapp_queue_fallback(
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    """Fallback for disk triggers if queue fails."""
+    if MINIAPP_QUEUE is None:
+        return
+    if not DATA_ROOT.exists():
+        return
+
+    # ── Download triggers ────────────────────────────────────────────────────
+    for trigger_file in DATA_ROOT.glob("*/download_trigger.json"):
+        try:
+            uid = int(trigger_file.parent.name)
+            with locked_file(trigger_file):
+                if not trigger_file.exists():
+                    continue
+                trigger_data = json.loads(trigger_file.read_text(encoding="utf-8"))
+                trigger_file.unlink(missing_ok=True)
+            if uid not in ACTIVE_USERS:
+                await MINIAPP_QUEUE.put(
+                    {"type": "download", "uid": uid, "data": trigger_data}
+                )
+        except Exception:
+            continue
+
+    # ── Stop flags ───────────────────────────────────────────────────────────
+    # [FIXED] server.py writes a stop_flag file when /api/download/stop is called.
+    # Without this, the Mini App Stop button had NO effect on the bot-side download
+    # when the queue-based path was used — the stop_flag was written but never read.
+    for stop_file in DATA_ROOT.glob("*/stop_flag"):
+        try:
+            uid = int(stop_file.parent.name)
+            with locked_file(stop_file):
+                if not stop_file.exists():
+                    continue
+                stop_file.unlink(missing_ok=True)
+            if uid in ACTIVE_USERS and uid in STOP_EVENTS:
+                STOP_EVENTS[uid].set()
+                logger.info("Fallback STOP triggered for uid=%s", uid)
+        except Exception:
+            continue
+
+
 def main() -> None:
     if not TOKEN or TOKEN == "YOUR_BOT_TOKEN":
         logger.critical("CRITICAL: BOT_TOKEN is missing, empty, or set to placeholder!")
@@ -3223,49 +3275,6 @@ def main() -> None:
         )
 
     app.run_polling(allowed_updates=["message", "callback_query"])
-
-
-async def poll_miniapp_queue_fallback(
-    context: ContextTypes.DEFAULT_TYPE,
-) -> None:
-    """Fallback for disk triggers if queue fails."""
-    if MINIAPP_QUEUE is None:
-        return
-    if not DATA_ROOT.exists():
-        return
-
-    # ── Download triggers ────────────────────────────────────────────────────
-    for trigger_file in DATA_ROOT.glob("*/download_trigger.json"):
-        try:
-            uid = int(trigger_file.parent.name)
-            with locked_file(trigger_file):
-                if not trigger_file.exists():
-                    continue
-                trigger_data = json.loads(trigger_file.read_text(encoding="utf-8"))
-                trigger_file.unlink(missing_ok=True)
-            if uid not in ACTIVE_USERS:
-                await MINIAPP_QUEUE.put(
-                    {"type": "download", "uid": uid, "data": trigger_data}
-                )
-        except Exception:
-            continue
-
-    # ── Stop flags ───────────────────────────────────────────────────────────
-    # [FIXED] server.py writes a stop_flag file when /api/download/stop is called.
-    # Without this, the Mini App Stop button had NO effect on the bot-side download
-    # when the queue-based path was used — the stop_flag was written but never read.
-    for stop_file in DATA_ROOT.glob("*/stop_flag"):
-        try:
-            uid = int(stop_file.parent.name)
-            with locked_file(stop_file):
-                if not stop_file.exists():
-                    continue
-                stop_file.unlink(missing_ok=True)
-            if uid in ACTIVE_USERS and uid in STOP_EVENTS:
-                STOP_EVENTS[uid].set()
-                logger.info("Fallback STOP triggered for uid=%s", uid)
-        except Exception:
-            continue
 
 
 if __name__ == "__main__":

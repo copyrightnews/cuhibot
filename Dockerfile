@@ -25,4 +25,7 @@ COPY bot.py server.py app.html logo.jpg ./
 # to point at a persistent volume (e.g. /app/data/storage and /app/data/cookies)
 ENV PYTHONUNBUFFERED=1
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:${PORT:-8080}/healthz || exit 1
+
 CMD ["python", "bot.py"]

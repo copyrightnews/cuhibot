@@ -30,14 +30,14 @@ if url:
             content = env_file.read_text(encoding="utf-8", errors="ignore")
             # Replace RAILWAY_PUBLIC_DOMAIN="..." and PUBLIC_DOMAIN="..." with the new URL
             if "RAILWAY_PUBLIC_DOMAIN=" in content:
-                content = re.sub(r'RAILWAY_PUBLIC_DOMAIN="[^"]*"', f'RAILWAY_PUBLIC_DOMAIN="{url}"', content)
+                content = re.sub(r'RAILWAY_PUBLIC_DOMAIN="[^"]*"', f'RAILWAY_PUBLIC_DOMAIN="https://{url}"', content)
             else:
-                content += f'\nRAILWAY_PUBLIC_DOMAIN="{url}"\n'
+                content += f'\nRAILWAY_PUBLIC_DOMAIN="https://{url}"\n'
                 
             if "PUBLIC_DOMAIN=" in content:
-                content = re.sub(r'PUBLIC_DOMAIN="[^"]*"', f'PUBLIC_DOMAIN="{url}"', content)
+                content = re.sub(r'PUBLIC_DOMAIN="[^"]*"', f'PUBLIC_DOMAIN="https://{url}"', content)
             else:
-                content += f'\nPUBLIC_DOMAIN="{url}"\n'
+                content += f'\nPUBLIC_DOMAIN="https://{url}"\n'
                 
             env_file.write_text(content, encoding="utf-8")
             print("Auto-updated .env with the new Tunnel URL!")

@@ -1,4 +1,5 @@
 @echo off
+setlocal enabledelayedexpansion
 title cuhibot Local Environment Runner
 echo ==================================================
 echo         cuhibot Local Environment Runner
@@ -14,9 +15,23 @@ timeout /t 1 /nobreak >nul
 :: Clean old log if exists
 if exist tunnel.log del tunnel.log
 
+:: Default port
+set LOCAL_PORT=8080
+
+:: Parse PORT from .env if it exists
+if exist .env (
+    for /f "usebackq tokens=1,2 delims==" %%i in (`findstr /i "^PORT=" .env`) do (
+        set "VAL=%%j"
+        set "VAL=!VAL:"=!"
+        set "VAL=!VAL:'=!"
+        for /f "tokens=*" %%a in ("!VAL!") do set "VAL=%%a"
+        if not "!VAL!"=="" set LOCAL_PORT=!VAL!
+    )
+)
+
 echo.
-echo [1/3] Starting Cloudflare Tunnel in the background...
-start "Cloudflare Tunnel Daemon" /min cmd /c "cloudflared.exe tunnel --url http://localhost:8080 > tunnel.log 2>&1"
+echo [1/3] Starting Cloudflare Tunnel on port !LOCAL_PORT!...
+start "Cloudflare Tunnel Daemon" /min cmd /c "cloudflared.exe tunnel --url http://localhost:!LOCAL_PORT! > tunnel.log 2>&1"
 
 :: Wait for URL and update .env
 python update_env.py
