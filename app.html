@@ -1091,6 +1091,8 @@ async function submitTokenLogin() {
   const url = document.getElementById('login-url').value.trim();
   const token = document.getElementById('login-token').value.trim();
   if (!url || !token) return showToast('⚠️ Both Server URL and App Token are required');
+  // Simple token format validation (alphanumeric, 10+ characters)
+  if (!/^[A-Za-z0-9_-]{10,}$/.test(token)) return showToast('⚠️ Invalid token format');
   
   localStorage.setItem('cuhi_api_url', url.replace(/\/$/, ''));
   localStorage.setItem('cuhi_app_token', token);
@@ -1897,11 +1899,7 @@ startHomePolling();
 })();
 
 // Re-check permission when app regains focus (user may have granted it in Settings)
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && isNativeApp) {
-    syncNativeFiles();
-  }
-});
+// Duplicate visibilitychange listener removed; functionality covered by earlier handler.
 </script>
 </body>
 </html>
