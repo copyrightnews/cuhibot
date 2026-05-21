@@ -1289,6 +1289,11 @@ function getPlatformBadge(p) {
   const color = colors[p] || '#8e8e93';
   return `<span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:${color}; margin-right:6px;"></span>`;
 }
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
 
 // ── Polling Logic ────────────────────────────────────────────────────
 let homePollTmr;
@@ -1338,7 +1343,7 @@ async function updateHomeStats() {
     const acctName = document.getElementById('account-name');
     const acctId = document.getElementById('account-id');
     if (stats.username) {
-      acctName.textContent = stats.name || stats.username;
+      acctName.textContent = stats.first_name || stats.username;
       acctId.textContent = '@' + stats.username;
     }
     
@@ -1356,15 +1361,20 @@ async function updateHomeStats() {
     document.getElementById('disk-used').textContent = disk.used_gb + ' GB used';
     document.getElementById('disk-free').textContent = disk.free_gb + ' GB free';
     
+    // [FIXED] Sync if download is running OR if there are files waiting on the server.
+    // This guarantees all files are saved to the device even after the download ceases,
+    // and recovers unsynced files when the app is restarted.
+    if (isNativeApp && stats && (stats.download_running || (stats.files_waiting && stats.files_waiting > 0))) {
+      syncNativeFiles();
+    }
   } catch(e) { console.error('Poll error', e); }
-  
-  // [FIXED] Sync if download is running OR if there are files waiting on the server.
-  // This guarantees all files are saved to the device even after the download ceases,
-  // and recovers unsynced files when the app is restarted.
-  if (isNativeApp && (stats.download_running || (stats.files_waiting && stats.files_waiting > 0))) {
-    syncNativeFiles();
-  }
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === 'visible') {
+    updateHomeStats();
+  }
+});
 
 let isSyncing = false;
 let _syncPollTmr = null;
@@ -1706,7 +1716,7 @@ async function loadSources() {
     container.innerHTML = sources.map(s => `
       <div class="cell">
         <div class="cell-body" style="padding-right: 12px;">
-          <div class="cell-label" style="font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight: 500;">${s.url}</div>
+          <div class="cell-label" style="font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight: 500;">${escapeHtml(s.url)}</div>
           <div class="cell-sub" style="display:flex; align-items:center;">${getPlatformBadge(s.platform)}${(s.platform || 'unknown').charAt(0).toUpperCase() + (s.platform || 'unknown').slice(1)}</div>
         </div>
         <button class="remove-btn" onclick="deleteSource('${s.platform}', '${encodeURIComponent(s.url)}')">Remove</button>
