@@ -1276,7 +1276,7 @@ async def realtime_download(
         / platform.capitalize()
         / handle
         / mode.capitalize()
-    )
+    ).resolve().absolute()
 
     if ignore_archive:
         archive = udir(uid) / "archives" / "_temp_link_archive.txt"
@@ -1365,8 +1365,15 @@ async def realtime_download(
                 if not line_bytes:
                     break
                 line = line_bytes.decode("utf-8", errors="replace").strip()
-                if line.startswith(str(out_dir)):
-                    f = Path(line)
+                try:
+                    f_cand = Path(line).resolve().absolute() if line else None
+                    is_in_out = (f_cand is not None and (out_dir == f_cand or out_dir in f_cand.parents))
+                except Exception:
+                    f_cand = None
+                    is_in_out = False
+
+                if is_in_out and f_cand:
+                    f = f_cand
                     if f.exists() and f.is_file() and f not in seen:
                         if f.suffix.lower() in exts:
                             seen.add(f)
@@ -1385,7 +1392,7 @@ async def realtime_download(
                                     )
                 elif any(line.endswith(ext) for ext in exts):
                     fname = os.path.basename(line)
-                    f = out_dir / fname
+                    f = (out_dir / fname).resolve().absolute()
                     if f.exists() and f.is_file() and f not in seen:
                         seen.add(f)
                         buffer.append(f)
@@ -1447,6 +1454,10 @@ async def realtime_download(
                 )
                 candidates = []
                 for f in sorted(files):
+                    try:
+                        f = f.resolve().absolute()
+                    except Exception:
+                        continue
                     if (
                         f in seen
                         or not f.is_file()
@@ -1498,6 +1509,10 @@ async def realtime_download(
         if not stop.is_set() and await asyncio.to_thread(out_dir.exists):
             files = await asyncio.to_thread(lambda: list(out_dir.iterdir()))
             for f in sorted(files):
+                try:
+                    f = f.resolve().absolute()
+                except Exception:
+                    continue
                 if (
                     f in seen
                     or not f.is_file()
@@ -2965,6 +2980,7 @@ async def miniapp_queue_worker(bot) -> None:
                     MINIAPP_QUEUE.task_done()
                     continue
 
+                ACTIVE_USERS.add(uid)
                 trigger_data = item.get("data", {})
                 logger.info("Instant DOWNLOAD for uid=%s", uid)
                 t = asyncio.ensure_future(

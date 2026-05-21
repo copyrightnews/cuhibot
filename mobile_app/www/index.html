@@ -544,6 +544,50 @@ body.theme-light .theme-seg-btn.active {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
+@keyframes gateContainerEntrance {
+  0% {
+    opacity: 0;
+    transform: scale(0.92) translateY(12px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+@keyframes bgEntrance {
+  0% {
+    opacity: 0;
+    transform: scale(1.35) rotate(2deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1.15) rotate(0deg);
+  }
+}
+.gate-bg-blur {
+  position: absolute;
+  inset: 0;
+  background-image: url('/logo.jpg');
+  background-size: cover;
+  background-position: center;
+  filter: blur(45px) brightness(0.22);
+  transform: scale(1.15);
+  z-index: 0;
+  animation: bgEntrance 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+body.theme-light .gate-bg-blur {
+  filter: blur(45px) brightness(0.85) contrast(0.8);
+}
+.gate-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 340px;
+  position: relative;
+  z-index: 1;
+  animation: gateContainerEntrance 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
 </style>
 </head>
 <body>
@@ -559,7 +603,10 @@ body.theme-light .theme-seg-btn.active {
 </div>
 
 <!-- ── Tabbed Login Gate ── -->
-<div id="gate" style="display:none; position:fixed; inset:0; z-index:9999; flex-direction:column; align-items:center; justify-content:flex-start; padding:24px 24px 34px 24px; text-align:center; overflow-y:auto; box-sizing:border-box;-webkit-overflow-scrolling:touch;">
+<div id="gate" style="display:none; position:fixed; inset:0; z-index:9999; flex-direction:column; align-items:center; justify-content:center; padding:24px; text-align:center; overflow-y:auto; box-sizing:border-box;-webkit-overflow-scrolling:touch;">
+  <!-- Blurred Full-Screen Logo Background -->
+  <div class="gate-bg-blur" id="gate-bg-blur"></div>
+
   <!-- Ambient glows -->
   <div class="gate-ambient">
     <div class="gate-glow-1"></div>
@@ -567,11 +614,11 @@ body.theme-light .theme-seg-btn.active {
     <div class="gate-glow-3"></div>
   </div>
 
-  <div style="display:flex; flex-direction:column; align-items:center; width:100%; max-width:340px; margin:auto 0; position:relative; z-index:1;">
+  <div class="gate-container">
     <!-- Logo outer float & glow -->
     <div class="gate-logo-outer">
       <div class="gate-logo-inner">
-        <img src="/logo.jpg" style="width:100%; height:100%; object-fit:cover;" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'%2300c6fb\'><path d=\'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z\'/></svg>'">
+        <img id="gate-logo-img" src="/logo.jpg" style="width:100%; height:100%; object-fit:cover;" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'%2300c6fb\'><path d=\'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z\'/></svg>'">
       </div>
     </div>
     
@@ -1013,6 +1060,16 @@ window.addEventListener('DOMContentLoaded', () => {
   if (splashLogo && savedApiUrl) {
     splashLogo.src = savedApiUrl + '/logo.jpg';
   }
+  const gateLogo = document.getElementById('gate-logo-img');
+  if (gateLogo && savedApiUrl) {
+    gateLogo.src = savedApiUrl + '/logo.jpg';
+  }
+  const gateBgBlur = document.getElementById('gate-bg-blur');
+  if (gateBgBlur && savedApiUrl) {
+    gateBgBlur.style.backgroundImage = `url('${savedApiUrl}/logo.jpg')`;
+  }
+  // Ensure HTML files are synced across entry points
+  sync_html_files();
 
   // Premium Delayed Transition for Opening Pulse Animation
   setTimeout(async () => {
@@ -1421,6 +1478,14 @@ async function syncNativeFiles() {
     for (const file of files) {
       // [FIXED] Build a dedup key from path + size to skip already-synced files
       const dedupKey = file.path + '::' + file.size;
+      if (_syncedFiles.has(dedupKey)) {
+        try {
+          await callApi('DELETE', '/api/files/' + file.path.split('/').map(encodeURIComponent).join('/'));
+        } catch(delErr) {
+          console.error('Cleanup delete for already-synced file failed', file.path, delErr);
+        }
+        continue;
+      }
       try {
         // [FIXED] Use shared getAuthHeaders() — fixes 401 for session-token users
         const downloadUrl = API_BASE + '/api/files/' + file.path.split('/').map(encodeURIComponent).join('/');

@@ -717,18 +717,31 @@ async def list_files(uid: int = Depends(get_uid)):
         ".avi",
         ".m4v",
     }
-    files = []
+    file_list = []
     for f in dl_dir.rglob("*"):
         if f.is_file() and f.suffix.lower() in MEDIA_EXTS:
             rel_path = f.relative_to(dl_dir)
-            files.append(
-                {
-                    "path": str(rel_path).replace("\\", "/"),
-                    "name": f.name,
-                    "size": f.stat().st_size,
-                }
+            try:
+                stat_val = f.stat()
+                mtime = stat_val.st_mtime
+                size = stat_val.st_size
+            except OSError:
+                mtime = 0
+                size = 0
+            file_list.append(
+                (
+                    mtime,
+                    {
+                        "path": str(rel_path).replace("\\", "/"),
+                        "name": f.name,
+                        "size": size,
+                    }
+                )
             )
-    return files
+    # Sort files chronologically (older first) so they are processed in order
+    file_list.sort(key=lambda x: x[0])
+    return [item[1] for item in file_list]
+
 
 
 @app.get("/api/files/{file_path:path}")
