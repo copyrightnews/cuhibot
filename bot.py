@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Cuhi Bot v2.2.0 — Stable Release — Production Hardened
+Cuhi Bot v2.3.0 — Stable Release — Production Hardened
 
 Platforms   : Instagram, TikTok, Facebook, X (Twitter)
 Persistence : per-user JSON files with async-safe file locks

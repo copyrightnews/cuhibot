@@ -2,6 +2,16 @@
 
 This is the history of every major fix and feature added to **Cuhi Bot**. We try to keep things clear and readable.
 
+## [2.3.0] Comprehensive Bug Fix Resolution — 2026-05-22
+
+### Features & Security Realignment
+- **Ecosystem Upgrade v2.3.0**: Aligned the Telegram Bot server, companion Mini App, and native Capacitor Android client under unified version `2.3.0` (versionCode `4`).
+- **Cryptographically Secure URL Source Deletion**: Migrated callback queries in Telegram from fragile index-based tracking to secure, race-free SHA-256 hash slices of target URLs.
+- **Wipe Downloads Directory Resilience**: Wrapped all background directory cleanups within robust exception-safe boundaries to prevent filesystem failures from halting execution flows.
+- **Asynchronous Execution Threading**: Restructured blocking I/O calls to use non-blocking `asyncio.to_thread` for `cookie_summary` analysis.
+- **Closure Scope Late-Binding Fix**: Hardened dynamic bulk profile imports by properly capturing platform targets inside closures.
+- **Mirror Layout Parity**: Ensured identical feature sync for XSS escape utilities, out-of-scope variable safety, and dynamic server-side session checks in all HTML companion files.
+
 ---
 
 ## [2.2.0] Release and Final Ecosystem Hardening — 2026-05-22
