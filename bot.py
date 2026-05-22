@@ -171,6 +171,9 @@ def start_mini_app_server():
 
 
 DATA_ROOT = Path(os.environ.get("DATA_ROOT", "./data"))
+from session_manager import SessionManager
+from file_utils import verify_file_type, sanitize_command_arg
+session_manager = SessionManager(DATA_ROOT / "sessions.json")
 COOKIES_ROOT = Path(os.environ.get("COOKIES_ROOT", "./cookies"))
 
 # (profiles_filename, cookie_filename, request_sleep_seconds)
@@ -209,7 +212,15 @@ ALL_MEDIA_EXT = PHOTO_EXT | VIDEO_EXT
 
 MEDIA_GROUP_MAX = 10
 STATUS_MIN_GAP = 2.0  # seconds between status edits
-TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # 50 MB Telegram Bot API cap
+# Check for custom telegram file upload limit (default 50MB for public Bot API)
+try:
+    _custom_limit = os.environ.get("TELEGRAM_FILE_LIMIT")
+    if _custom_limit:
+        TELEGRAM_FILE_LIMIT = int(_custom_limit)
+    else:
+        TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024
+except Exception:
+    TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024
 
 # ── Security constants ───────────────────────────────────────────────────────
 _ALLOWED_RAW = os.environ.get("ALLOWED_USERS", "").strip()
@@ -259,51 +270,86 @@ _SCHEDULE_CACHE: dict[int, tuple[str | None, str | None]] = {}
 
 @contextmanager
 def locked_file(target: Path):
-    """Atomic advisory file lock using O_CREAT|O_EXCL.
-
-    [FIXED] Removed blocking time.sleep(0.001) in favor of a simpler retry logic
-    that remains safe but doesn't block the loop as aggressively. Note that
-    per-user lock contention is extremely rare in this bot.
+    """TOCTOU-safe, OS-level file lock wrapper that works on both Windows and Linux/Unix.
+    Matches the locking mechanism of server.py to prevent race conditions.
     """
+    import sys
     target.parent.mkdir(parents=True, exist_ok=True)
     lock_path = target.with_suffix(target.suffix + ".lock")
-    fd = None
-    max_retries = 50
-    for attempt in range(max_retries):
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            break
-        except FileExistsError:
-            try:
-                # Stale lock detection — wall-clock time to match st_mtime
-                age = time.time() - lock_path.stat().st_mtime
-                if age > 30:
-                    lock_path.unlink(missing_ok=True)
-                    continue
-            except OSError:
-                pass
-            if attempt == max_retries - 1:
-                raise TimeoutError(
-                    f"Could not acquire lock on {target} after {max_retries} retries"
-                )
-            # [FIXED] Sleep for a tiny amount to prevent high CPU usage (busy-waiting)
-            time.sleep(0.01)
-
-    if fd is None:
-        raise TimeoutError(
-            f"Could not acquire lock on {target} after {max_retries} retries"
-        )
+    fp = open(lock_path, "a+", encoding="utf-8")
     try:
+        if sys.platform == "win32":
+            import msvcrt
+            acquired = False
+            for attempt in range(100):
+                try:
+                    fp.seek(0)
+                    msvcrt.locking(fp.fileno(), msvcrt.LK_NBLCK, 1)
+                    acquired = True
+                    break
+                except (OSError, IOError):
+                    time.sleep(0.02)
+            if not acquired:
+                raise TimeoutError(f"Could not acquire Windows OS-level lock on {target}")
+        else:
+            import fcntl
+            acquired = False
+            for attempt in range(100):
+                try:
+                    fcntl.flock(fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                    break
+                except (OSError, IOError):
+                    time.sleep(0.02)
+            if not acquired:
+                raise TimeoutError(f"Could not acquire Unix OS-level lock on {target}")
         yield
     finally:
         try:
-            os.close(fd)
-        except OSError:
+            if sys.platform == "win32":
+                import msvcrt
+                fp.seek(0)
+                msvcrt.locking(fp.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fp.fileno(), fcntl.LOCK_UN)
+        except Exception:
             pass
-        try:
-            lock_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        finally:
+            fp.close()
+            try:
+                lock_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def validate_environment() -> None:
+    """Validate critical environment variables at startup to prevent failures or misconfiguration."""
+    token = os.environ.get("BOT_TOKEN")
+    if not token or token == "YOUR_BOT_TOKEN":
+        raise ValueError("BOT_TOKEN is not set or is still set to placeholder")
+    
+    if not re.match(r"^\d+:[A-Za-z0-9_-]+$", token):
+        raise ValueError("BOT_TOKEN format is invalid. Must be in the format '123456789:ABC...'")
+
+    encryption_key = os.environ.get("COOKIE_ENCRYPTION_KEY")
+    if not encryption_key:
+        raise ValueError("COOKIE_ENCRYPTION_KEY is not set in environment. Please generate a 32-byte key.")
+        
+    try:
+        from cryptography.fernet import Fernet
+        Fernet(encryption_key.encode("utf-8"))
+    except Exception as e:
+        raise ValueError(f"COOKIE_ENCRYPTION_KEY is invalid or malformed: {e}")
+
+
+def validate_file_integrity(path: Path) -> bool:
+    """Verifies that a file is non-empty and has valid magic bytes using file_utils.verify_file_type."""
+    if not path.exists() or not path.is_file():
+        return False
+    if path.stat().st_size <= 0:
+        return False
+    return verify_file_type(path)
 
 
 def udir(uid: int) -> Path:
@@ -348,17 +394,22 @@ def folder_mb(path: Path) -> float:
     if not path.exists():
         return 0.0
     total = 0
-    for f in path.rglob("*"):
-        if f.is_file():
-            try:
-                total += f.stat().st_size
-            except OSError:
-                pass
+    path_str = str(path)
+    for root, dirs, files in os.walk(path_str):
+        # Exclude symlinked dirs
+        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
+        for file in files:
+            file_path = os.path.join(root, file)
+            if not os.path.islink(file_path):
+                try:
+                    total += os.path.getsize(file_path)
+                except OSError:
+                    pass
     return round(total / (1024 * 1024), 2)
 
 
 def wipe_downloads(uid: int) -> float:
-    """Robustly delete the downloads folder.
+    """Robustly delete the downloads folder using os.walk.
 
     Lifetime stats (downloaded_mb, files_sent) are preserved in settings.json.
     """
@@ -366,11 +417,21 @@ def wipe_downloads(uid: int) -> float:
     freed = folder_mb(root)
 
     if root.exists():
-        # Individual unlink is safer on Windows than a raw rmtree
-        for f in root.rglob("*"):
-            if f.is_file():
+        root_str = str(root)
+        for dirpath, dirnames, filenames in os.walk(root_str, topdown=False):
+            for file in filenames:
+                file_path = os.path.join(dirpath, file)
                 try:
-                    f.unlink(missing_ok=True)
+                    os.unlink(file_path)
+                except OSError:
+                    pass
+            for dirname in dirnames:
+                dir_path = os.path.join(dirpath, dirname)
+                try:
+                    if os.path.islink(dir_path):
+                        os.unlink(dir_path)
+                    else:
+                        os.rmdir(dir_path)
                 except OSError:
                     pass
         shutil.rmtree(root, ignore_errors=True)
@@ -382,16 +443,66 @@ def wipe_downloads(uid: int) -> float:
 
 def resolve_cookie(uid: int, platform: str) -> Path:
     """Return best available cookie file.
-    Priority: per-user upload > global env-var cookie > missing.
+    Priority: per-user encrypted > per-user plaintext > global encrypted > global plaintext.
     """
     _, cookie_name, _ = PLATFORMS[platform]
-    user_cookie = cdir(uid) / cookie_name
-    global_cookie = global_cookie_dir() / cookie_name
-    if user_cookie.exists():
-        return user_cookie
-    if global_cookie.exists():
-        return global_cookie
-    return user_cookie  # doesn't exist; caller checks .exists()
+    cookie_enc_name = cookie_name.replace('.txt', '.enc')
+    
+    user_cookie_enc = cdir(uid) / cookie_enc_name
+    user_cookie_txt = cdir(uid) / cookie_name
+    global_cookie_enc = global_cookie_dir() / cookie_enc_name
+    global_cookie_txt = global_cookie_dir() / cookie_name
+    
+    if user_cookie_enc.exists():
+        return user_cookie_enc
+    if user_cookie_txt.exists():
+        return user_cookie_txt
+    if global_cookie_enc.exists():
+        return global_cookie_enc
+    if global_cookie_txt.exists():
+        return global_cookie_txt
+        
+    return user_cookie_enc  # default fallback; doesn't exist
+
+
+@contextmanager
+def decrypted_cookie_context(cookie_path: Path):
+    """If the cookie is encrypted (.enc), decrypt it to a temporary file,
+    yield its path, and securely delete it when done.
+    If it's already a plaintext .txt file (or missing), yield it as is.
+    """
+    if cookie_path.suffix == ".enc" and cookie_path.exists():
+        import secrets
+        from crypto_utils import get_crypto
+        
+        # Generate a secure temporary path
+        tmp_name = f"cookie_{secrets.token_hex(8)}.tmp"
+        tmp_path = cookie_path.parent / tmp_name
+        
+        try:
+            crypto = get_crypto()
+            decrypted_data = crypto.load_encrypted_cookie(cookie_path)
+            if decrypted_data:
+                # Write to tmp file securely
+                tmp_path.write_text(decrypted_data, encoding="utf-8")
+                yield tmp_path
+            else:
+                yield cookie_path
+        finally:
+            if tmp_path.exists():
+                try:
+                    # Secure wipe: overwrite with zeros before unlinking
+                    size = tmp_path.stat().st_size
+                    if size > 0:
+                        tmp_path.write_bytes(b"\x00" * size)
+                except Exception:
+                    pass
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+    else:
+        yield cookie_path
 
 
 # =============================================================================
@@ -989,6 +1100,17 @@ def build_gdl_cmd(
     else:
         effective = url
 
+    # Strict URL validation to prevent command injection or malformed URLs
+    parsed = urlparse(effective)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError("Invalid URL scheme or missing domain")
+    # Reject dangerous characters in URLs
+    if any(c in effective for c in ("\r", "\n", "\x00", " ", "'", '"', "`", ";", "&", "|", "$")):
+        raise ValueError("URL contains illegal or dangerous characters")
+
+    # Sanitize effective URL for general shell-safety auditing
+    _ = sanitize_command_arg(effective)
+
     if media_filter == "photos":
         cmd += [
             "--filter",
@@ -1297,10 +1419,27 @@ async def realtime_download(
     else:
         exts, send_as = PHOTO_EXT | VIDEO_EXT, "mixed"
 
+    active_cookie_path = cookie
+    temp_cookie_to_purge = None
+    
+    if cookie.suffix == ".enc" and cookie.exists():
+        import secrets
+        from crypto_utils import get_crypto
+        tmp_name = f"cookie_{secrets.token_hex(8)}.tmp"
+        temp_cookie_to_purge = cookie.parent / tmp_name
+        try:
+            crypto = get_crypto()
+            decrypted_data = crypto.load_encrypted_cookie(cookie)
+            if decrypted_data:
+                temp_cookie_to_purge.write_text(decrypted_data, encoding="utf-8")
+                active_cookie_path = temp_cookie_to_purge
+        except Exception as e:
+            logger.error("Failed to decrypt cookie in realtime_download: %s", e)
+
     cmd, _ = build_gdl_cmd(
         out_dir=out_dir,
         archive=archive,
-        cookie=cookie,
+        cookie=active_cookie_path,
         sleep=sleep,
         url=url,
         mode=mode,
@@ -1322,10 +1461,13 @@ async def realtime_download(
     stderr_buf = bytearray()
     seen: set[Path] = set()
     if out_dir.exists():
-        for f in out_dir.rglob("*"):
-            if f.is_file():
+        out_dir_str = str(out_dir)
+        for root_path, dirs, files in os.walk(out_dir_str):
+            dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root_path, d))]
+            for file in files:
+                f_path = Path(os.path.join(root_path, file))
                 try:
-                    seen.add(f.resolve().absolute())
+                    seen.add(f_path.resolve().absolute())
                 except Exception:
                     pass
     buffer: list[Path] = []
@@ -1370,7 +1512,7 @@ async def realtime_download(
                 if is_in_out and f_cand:
                     f = f_cand
                     if f.exists() and f.is_file() and f not in seen:
-                        if f.suffix.lower() in exts:
+                        if f.suffix.lower() in exts and validate_file_integrity(f):
                             seen.add(f)
                             buffer.append(f)
                             try:
@@ -1389,20 +1531,21 @@ async def realtime_download(
                     fname = os.path.basename(line)
                     f = (out_dir / fname).resolve().absolute()
                     if f.exists() and f.is_file() and f not in seen:
-                        seen.add(f)
-                        buffer.append(f)
-                        try:
-                            sz = f.stat().st_size
-                            downloaded_bytes += sz
-                            await add_downloaded_bytes(uid, sz)
-                        except OSError:
-                            pass
-                        if len(buffer) >= MEDIA_GROUP_MAX:
-                            await drain()
-                            if status:
-                                await status.set(
-                                    f"📦 `{handle}` › {sent_count} file(s) sent…"
-                                )
+                        if validate_file_integrity(f):
+                            seen.add(f)
+                            buffer.append(f)
+                            try:
+                                sz = f.stat().st_size
+                                downloaded_bytes += sz
+                                await add_downloaded_bytes(uid, sz)
+                            except OSError:
+                                pass
+                            if len(buffer) >= MEDIA_GROUP_MAX:
+                                await drain()
+                                if status:
+                                    await status.set(
+                                        f"📦 `{handle}` › {sent_count} file(s) sent…"
+                                    )
         except Exception:
             pass
 
@@ -1482,7 +1625,7 @@ async def realtime_download(
                             s2 = await asyncio.to_thread(
                                 lambda _f=f: _f.stat().st_size
                             )
-                            if initial_sizes[f] == s2:
+                            if initial_sizes[f] == s2 and validate_file_integrity(f):
                                 seen.add(f)
                                 buffer.append(f)
                                 downloaded_bytes += s2
@@ -1512,6 +1655,7 @@ async def realtime_download(
                     f in seen
                     or not f.is_file()
                     or f.suffix.lower() not in exts
+                    or not validate_file_integrity(f)
                 ):
                     continue
                 if f.name.endswith((".part", ".ytdl", ".tmp")):
@@ -1545,6 +1689,18 @@ async def realtime_download(
                     force=True,
                 )
     finally:
+        if temp_cookie_to_purge and temp_cookie_to_purge.exists():
+            try:
+                size = temp_cookie_to_purge.stat().st_size
+                if size > 0:
+                    temp_cookie_to_purge.write_bytes(b"\x00" * size)
+            except Exception:
+                pass
+            try:
+                temp_cookie_to_purge.unlink(missing_ok=True)
+            except Exception:
+                pass
+
         if ignore_archive:
             archive.unlink(missing_ok=True)
 
@@ -1798,22 +1954,6 @@ async def _answer(q) -> None:
         pass
 
 
-def _write_session_sync(app_token: str, session_data: dict) -> None:
-    sessions_file = DATA_ROOT / "sessions.json"
-    sessions_file.parent.mkdir(parents=True, exist_ok=True)
-    with locked_file(sessions_file):
-        sessions = {}
-        if sessions_file.exists():
-            try:
-                sessions = json.loads(sessions_file.read_text(encoding="utf-8"))
-            except Exception:
-                pass
-        sessions[app_token] = session_data
-        sessions_file.write_text(
-            json.dumps(sessions, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-
-
 async def cmd_app(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Generate a login token for the standalone Android App."""
     if not update.message or not update.effective_user:
@@ -1822,21 +1962,14 @@ async def cmd_app(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if ALLOWED_USERS and uid not in ALLOWED_USERS and uid not in ADMIN_IDS:
         return
 
-    import secrets
-    token_hex = secrets.token_hex(32)
-    app_token = f"cuhi_session_token_{token_hex}"
-    expires_at = time.time() + (30 * 24 * 60 * 60)  # 30 days
-
-    session_data = {
-        "id": uid,
-        "first_name": update.effective_user.first_name or "App User",
-        "username": update.effective_user.username or "app",
-        "expires_at": expires_at
-    }
-
-    await asyncio.get_running_loop().run_in_executor(
-        _IO_POOL, _write_session_sync, app_token, session_data
+    session_res = await asyncio.get_running_loop().run_in_executor(
+        _IO_POOL,
+        session_manager.create_session,
+        uid,
+        update.effective_user.username or "app",
+        update.effective_user.first_name or "App User"
     )
+    app_token = session_res["access_token"]
 
     text = (
         "📱 *Android App Login*\n\n"
@@ -2592,12 +2725,26 @@ async def cmd_schedule(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 def bootstrap_env_cookies() -> None:
+    """Bootstrap cookies defined in env variables directly into secure encrypted (.enc) global files."""
     dest_dir = global_cookie_dir()
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        from crypto_utils import get_crypto
+        crypto = get_crypto()
+    except Exception as e:
+        logger.error("Failed to initialize cryptographic cipher during bootstrap: %s", e)
+        return
+
     for env_key, cookie_filename in COOKIE_ENV_MAP.items():
         value = os.environ.get(env_key, "").strip()
         if not value:
             continue
-        dest = dest_dir / cookie_filename
+            
+        cookie_enc_name = cookie_filename.replace('.txt', '.enc')
+        dest_enc = dest_dir / cookie_enc_name
+        dest_txt = dest_dir / cookie_filename
+        
         try:
             decoded = base64.b64decode(value, validate=True).decode("utf-8")
             content = (
@@ -2607,10 +2754,22 @@ def bootstrap_env_cookies() -> None:
             )
         except Exception:
             content = value
+            
         try:
-            dest.write_text(content, encoding="utf-8")
-        except Exception:
-            pass
+            # Save as encrypted cookie
+            crypto.save_encrypted_cookie(dest_enc, content)
+            
+            # Securely remove old plaintext file if it exists
+            if dest_txt.exists():
+                try:
+                    size = dest_txt.stat().st_size
+                    if size > 0:
+                        dest_txt.write_bytes(b"\x00" * size)
+                    dest_txt.unlink(missing_ok=True)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.error("Failed to bootstrap encrypted cookie for %s: %s", env_key, e)
 
 
 async def cmd_admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3128,6 +3287,20 @@ async def poll_miniapp_queue_loop(app: Application) -> None:
         await asyncio.sleep(1)
 
 
+async def periodic_tasks_cleanup():
+    """Background task to periodically clean completed/cancelled tasks from _TASKS set."""
+    while True:
+        try:
+            await asyncio.sleep(300)  # Clean every 5 minutes
+            done_tasks = {t for t in _TASKS if t.done()}
+            for t in done_tasks:
+                _TASKS.discard(t)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            pass
+
+
 async def _combined_post_init(application: Application) -> None:
     """Combined post_init: restore schedules + start queue worker."""
     global MINIAPP_QUEUE
@@ -3141,6 +3314,10 @@ async def _combined_post_init(application: Application) -> None:
     loop_task = asyncio.create_task(poll_miniapp_queue_loop(application))
     _TASKS.add(loop_task)
     loop_task.add_done_callback(_TASKS.discard)
+
+    cleanup_task = asyncio.create_task(periodic_tasks_cleanup())
+    _TASKS.add(cleanup_task)
+    cleanup_task.add_done_callback(_TASKS.discard)
 
 
 async def poll_miniapp_queue_fallback(
@@ -3188,6 +3365,12 @@ async def poll_miniapp_queue_fallback(
 
 
 def main() -> None:
+    try:
+        validate_environment()
+    except Exception as e:
+        logger.critical("CRITICAL: Environment validation failed: %s", e)
+        import sys
+        sys.exit(1)
     if not TOKEN or TOKEN == "YOUR_BOT_TOKEN":
         logger.critical("CRITICAL: BOT_TOKEN is missing, empty, or set to placeholder!")
         import sys

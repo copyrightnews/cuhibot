@@ -27,6 +27,12 @@ class TestCuhiBot(unittest.TestCase):
         server.DATA_ROOT = self.test_dir / "data"
         server.SESSIONS_FILE = self.test_dir / "data" / "sessions.json"
         
+        # Override session_manager paths as well
+        if hasattr(server, "session_manager"):
+            server.session_manager.sessions_file = server.SESSIONS_FILE
+        if hasattr(bot, "session_manager"):
+            bot.session_manager.sessions_file = bot.DATA_ROOT / "sessions.json"
+        
         # Ensure directories exist
         bot.DATA_ROOT.mkdir(parents=True, exist_ok=True)
         bot.COOKIES_ROOT.mkdir(parents=True, exist_ok=True)
@@ -150,9 +156,10 @@ class TestCuhiBot(unittest.TestCase):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            from fastapi import HTTPException
+            from fastapi import HTTPException, Request
+            mock_request = Request({"type": "http", "method": "DELETE", "path": "/api/sources", "headers": []})
             with self.assertRaises(HTTPException) as ctx:
-                loop.run_until_complete(server.delete_source("invalid_platform", "https://instagram.com/user", 12345))
+                loop.run_until_complete(server.delete_source(mock_request, "invalid_platform", "https://instagram.com/user", 12345))
             self.assertEqual(ctx.exception.status_code, 400)
             self.assertIn("Unknown platform", ctx.exception.detail)
         finally:

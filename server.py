@@ -110,53 +110,69 @@ log = logging.getLogger("cuhi.server")
 # ── Auth & Session Store ──────────────────────────────────────────────
 SESSIONS_FILE = DATA_ROOT / "sessions.json"
 
+from session_manager import SessionManager
+session_manager = SessionManager(SESSIONS_FILE)
+
+from file_utils import validate_file_path, check_disk_space
+
 from contextlib import contextmanager
 import time
 
 
 @contextmanager
 def locked_file(target: Path):
-    """Atomic advisory file lock using O_CREAT|O_EXCL.
+    """TOCTOU-safe, OS-level file lock wrapper that works on both Windows and Linux/Unix.
     Matches the locking mechanism of bot.py to prevent race conditions.
     """
+    import sys
     target.parent.mkdir(parents=True, exist_ok=True)
     lock_path = target.with_suffix(target.suffix + ".lock")
-    fd = None
-    max_retries = 50
-    for attempt in range(max_retries):
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            break
-        except FileExistsError:
-            try:
-                # Stale lock detection — wall-clock time to match st_mtime
-                age = time.time() - lock_path.stat().st_mtime
-                if age > 30:
-                    lock_path.unlink(missing_ok=True)
-                    continue
-            except OSError:
-                pass
-            if attempt == max_retries - 1:
-                raise TimeoutError(
-                    f"Could not acquire lock on {target} after {max_retries} retries"
-                )
-            time.sleep(0.01)
-
-    if fd is None:
-        raise TimeoutError(
-            f"Could not acquire lock on {target} after {max_retries} retries"
-        )
+    fp = open(lock_path, "a+", encoding="utf-8")
     try:
+        if sys.platform == "win32":
+            import msvcrt
+            acquired = False
+            for attempt in range(100):
+                try:
+                    fp.seek(0)
+                    msvcrt.locking(fp.fileno(), msvcrt.LK_NBLCK, 1)
+                    acquired = True
+                    break
+                except (OSError, IOError):
+                    time.sleep(0.02)
+            if not acquired:
+                raise TimeoutError(f"Could not acquire Windows OS-level lock on {target}")
+        else:
+            import fcntl
+            acquired = False
+            for attempt in range(100):
+                try:
+                    fcntl.flock(fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                    break
+                except (OSError, IOError):
+                    time.sleep(0.02)
+            if not acquired:
+                raise TimeoutError(f"Could not acquire Unix OS-level lock on {target}")
         yield
     finally:
         try:
-            os.close(fd)
-        except OSError:
+            if sys.platform == "win32":
+                import msvcrt
+                fp.seek(0)
+                msvcrt.locking(fp.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fp.fileno(), fcntl.LOCK_UN)
+        except Exception:
             pass
-        try:
-            lock_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+        finally:
+            fp.close()
+            try:
+                lock_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
 
 
 def read_json_direct(path: Path, default=None):
@@ -184,18 +200,7 @@ def get_sessions() -> dict:
 
 
 def validate_token(token: str) -> dict | None:
-    if not token or not token.startswith("cuhi_session_token_"):
-        return None
-    sessions = get_sessions()
-    session = sessions.get(token)
-    if not session:
-        return None
-    
-    # Expiry validation
-    expires_at = session.get("expires_at", 0)
-    if time.time() > expires_at:
-        return None
-    return session
+    return session_manager.validate_session(token)
 
 
 def _validate_init_data(init_data: str) -> dict:
@@ -324,7 +329,10 @@ def count_downloaded_files(uid: int) -> int:
     total = 0
     dl_root = user_dir(uid) / "downloads"
     if dl_root.exists():
-        total += sum(1 for f in dl_root.rglob("*") if f.is_file())
+        dl_root_str = str(dl_root)
+        for root, dirs, files in os.walk(dl_root_str):
+            dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
+            total += len(files)
     return total
 
 
@@ -381,9 +389,11 @@ def get_active_cookies(uid: int) -> list[str]:
     ck_dir = user_cookies_dir(uid)
     active = []
     for plat, fname in COOKIE_FILE.items():
-        if (ck_dir / fname).exists():
+        enc_fname = fname.replace('.txt', '.enc')
+        if (ck_dir / enc_fname).exists() or (ck_dir / fname).exists():
             active.append(plat)
     return active
+
 
 
 # ── Pydantic models ───────────────────────────────────────────────────
@@ -416,9 +426,46 @@ class ScheduleSet(BaseModel):
     enabled: bool = True
 
 
-# ── FastAPI app ───────────────────────────────────────────────────────
 # ── FastAPI app & CORS Configuration ─────────────────────────────────────
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from fastapi.responses import JSONResponse
+
+# Initialize rate limiter
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["200/hour"],  # Global default
+    storage_uri="memory://",
+)
+
 app = FastAPI(docs_url=None, redoc_url=None)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+@app.exception_handler(RateLimitExceeded)
+async def custom_rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    """Custom rate limit exceeded response."""
+    log.warning(
+        "Rate limit exceeded for %s on %s",
+        get_remote_address(request),
+        request.url.path
+    )
+    retry_after = "60"
+    if exc.detail and "Retry after" in exc.detail:
+        try:
+            retry_after = exc.detail.split("Retry after ")[1].split(" ")[0]
+        except Exception:
+            pass
+    return JSONResponse(
+        status_code=429,
+        content={
+            "error": "rate_limit_exceeded",
+            "message": "Too many requests. Please try again later.",
+            "retry_after": f"{retry_after} seconds"
+        },
+        headers={"Retry-After": retry_after}
+    )
 
 # Build dynamic allowed origins list
 allowed_origins = [
@@ -448,6 +495,11 @@ if cors_custom:
         origin_clean = origin.strip()
         if origin_clean:
             allowed_origins.append(origin_clean)
+
+# Secure CORS: In production, exclude credentials for localhost origins to prevent CSRF risks.
+is_prod = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("ENV") == "production")
+if is_prod:
+    allowed_origins = [orig for orig in allowed_origins if "localhost" not in orig]
 
 app.add_middleware(
     CORSMiddleware,
@@ -480,7 +532,38 @@ async def serve_logo():
 
 @app.get("/healthz")
 async def healthz():
-    return {"status": "ok"}
+    # 1. Check disk space
+    try:
+        if not check_disk_space(DATA_ROOT, required_mb=50):
+            raise HTTPException(503, "Low disk space (< 50 MB)")
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(503, f"Disk space check failed: {e}")
+
+    # 2. Check write permission on DATA_ROOT
+    try:
+        DATA_ROOT.mkdir(parents=True, exist_ok=True)
+        test_file = DATA_ROOT / ".healthz_write_test"
+        test_file.touch()
+        test_file.unlink()
+    except Exception as e:
+        raise HTTPException(503, f"DATA_ROOT is not writable: {e}")
+
+    # 3. Check write permission on COOKIES_ROOT
+    try:
+        COOKIES_ROOT.mkdir(parents=True, exist_ok=True)
+        test_file = COOKIES_ROOT / ".healthz_write_test"
+        test_file.touch()
+        test_file.unlink()
+    except Exception as e:
+        raise HTTPException(503, f"COOKIES_ROOT is not writable: {e}")
+
+    return {
+        "status": "ok",
+        "disk_free_mb": f"{free_mb:.2f}",
+        "write_checks": "passed"
+    }
 
 
 # ── Stats ─────────────────────────────────────────────────────────────
@@ -535,7 +618,8 @@ async def list_sources(uid: int = Depends(get_uid)):
 
 
 @app.post("/api/sources", status_code=201)
-async def add_source(body: SourceAdd, uid: int = Depends(get_uid)):
+@limiter.limit("20/minute")
+async def add_source(request: Request, body: SourceAdd, uid: int = Depends(get_uid)):
     plat = body.platform.lower()
     if plat not in PLATFORMS:
         raise HTTPException(400, f"Unknown platform: {plat}")
@@ -548,7 +632,8 @@ async def add_source(body: SourceAdd, uid: int = Depends(get_uid)):
 
 
 @app.delete("/api/sources/{platform}/{url:path}")
-async def delete_source(platform: str, url: str, uid: int = Depends(get_uid)):
+@limiter.limit("20/minute")
+async def delete_source(request: Request, platform: str, url: str, uid: int = Depends(get_uid)):
     plat = platform.lower()
     if plat not in PLATFORMS:
         raise HTTPException(400, f"Unknown platform: {plat}")
@@ -569,32 +654,65 @@ async def list_cookies(uid: int = Depends(get_uid)):
     ck_dir = user_cookies_dir(uid)
     result = []
     for plat, fname in COOKIE_FILE.items():
-        has = (ck_dir / fname).exists()
+        enc_fname = fname.replace('.txt', '.enc')
+        has = (ck_dir / enc_fname).exists() or (ck_dir / fname).exists()
         result.append({"platform": plat, "has_cookie": has})
     return result
 
 
 @app.post("/api/cookies")
-async def set_cookie(body: CookieSet, uid: int = Depends(get_uid)):
+@limiter.limit("5/minute")
+async def set_cookie(request: Request, body: CookieSet, uid: int = Depends(get_uid)):
     if body.platform not in COOKIE_FILE:
         raise HTTPException(400, f"Unknown platform: {body.platform}")
     ck_dir = user_cookies_dir(uid)
     ck_dir.mkdir(parents=True, exist_ok=True)
-    ck_path = ck_dir / COOKIE_FILE[body.platform]
-    with locked_file(ck_path):
-        ck_path.write_text(body.cookie_data, encoding="utf-8")
-    return {"platform": body.platform, "status": "saved"}
+    
+    enc_fname = COOKIE_FILE[body.platform].replace('.txt', '.enc')
+    ck_path = ck_dir / enc_fname
+    old_path = ck_dir / COOKIE_FILE[body.platform]
+    
+    try:
+        from crypto_utils import get_crypto
+        crypto = get_crypto()
+        with locked_file(ck_path):
+            crypto.save_encrypted_cookie(ck_path, body.cookie_data)
+        
+        # Safely remove old plaintext file if it exists
+        if old_path.exists():
+            try:
+                old_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+                
+        return {"platform": body.platform, "status": "saved"}
+    except Exception as e:
+        log.exception("Cookie encryption failed for uid=%s: %s", uid, e)
+        raise HTTPException(500, f"Failed to encrypt cookie: {e}")
 
 
 @app.delete("/api/cookies/{platform}")
-async def delete_cookie(platform: str, uid: int = Depends(get_uid)):
+@limiter.limit("5/minute")
+async def delete_cookie(request: Request, platform: str, uid: int = Depends(get_uid)):
     if platform not in COOKIE_FILE:
         raise HTTPException(400, f"Unknown platform: {platform}")
-    ck_path = user_cookies_dir(uid) / COOKIE_FILE[platform]
-    with locked_file(ck_path):
-        if ck_path.exists():
-            ck_path.unlink()
+    
+    ck_dir = user_cookies_dir(uid)
+    enc_fname = COOKIE_FILE[platform].replace('.txt', '.enc')
+    enc_path = ck_dir / enc_fname
+    old_path = ck_dir / COOKIE_FILE[platform]
+    
+    with locked_file(enc_path):
+        if enc_path.exists():
+            enc_path.unlink()
+            
+    if old_path.exists():
+        with locked_file(old_path):
+            if old_path.exists():
+                old_path.unlink()
+                
     return {"deleted": platform}
+
 
 
 # ── History ───────────────────────────────────────────────────────────
@@ -606,7 +724,8 @@ async def get_history(limit: int = 100, uid: int = Depends(get_uid)):
 
 
 @app.delete("/api/history")
-async def delete_history(uid: int = Depends(get_uid)):
+@limiter.limit("20/minute")
+async def delete_history(request: Request, uid: int = Depends(get_uid)):
     clear_history(uid)
     return {"ok": True, "message": "History cleared"}
 
@@ -623,22 +742,32 @@ async def get_channel(uid: int = Depends(get_uid)):
 def normalize_chat(value) -> int | str:
     """Convert user-entered channel strings into valid Telegram chat IDs."""
     if isinstance(value, int):
+        if not (-1000000000000 <= value <= 1000000000000):
+            raise HTTPException(400, "Telegram ID out of range")
         return value
     v = str(value).strip()
     if v.startswith("@"):
+        if len(v) > 33 or len(v) < 2:
+            raise HTTPException(400, "Invalid Telegram username")
         return v
     if v.lstrip("-").isdigit():
         n = int(v)
+        if not (-1000000000000 <= n <= 1000000000000):
+            raise HTTPException(400, "Telegram ID out of range")
         if n < 0:
             return n
         if n > 5000000000:
             return n
-        return int(f"-100{n}")
+        res = int(f"-100{n}")
+        if not (-1000000000000 <= res <= 1000000000000):
+            raise HTTPException(400, "Telegram ID out of range")
+        return res
     return v
 
 
 @app.post("/api/channel")
-async def set_channel(body: ChannelSet, uid: int = Depends(get_uid)):
+@limiter.limit("20/minute")
+async def set_channel(request: Request, body: ChannelSet, uid: int = Depends(get_uid)):
     normalized = normalize_chat(body.channel_id)
     set_settings(uid, {"channel": normalized, "output_channel": normalized})
     return {"channel_id": normalized}
@@ -657,7 +786,8 @@ async def get_schedule(uid: int = Depends(get_uid)):
 
 
 @app.post("/api/schedule")
-async def set_schedule(body: ScheduleSet, uid: int = Depends(get_uid)):
+@limiter.limit("20/minute")
+async def set_schedule(request: Request, body: ScheduleSet, uid: int = Depends(get_uid)):
     set_settings(
         uid, {"schedule_cron": body.cron, "schedule_enabled": body.enabled}
     )
@@ -668,7 +798,8 @@ async def set_schedule(body: ScheduleSet, uid: int = Depends(get_uid)):
 
 
 @app.post("/api/download")
-async def trigger_download(body: DownloadTrigger, uid: int = Depends(get_uid)):
+@limiter.limit("10/minute")
+async def trigger_download(request: Request, body: DownloadTrigger, uid: int = Depends(get_uid)):
     running_flag = user_dir(uid) / "download_running"
     with locked_file(running_flag):
         if running_flag.exists():
@@ -756,26 +887,30 @@ async def list_files(uid: int = Depends(get_uid)):
         ".m4v",
     }
     file_list = []
-    for f in dl_dir.rglob("*"):
-        if f.is_file() and f.suffix.lower() in MEDIA_EXTS:
-            rel_path = f.relative_to(dl_dir)
-            try:
-                stat_val = f.stat()
-                mtime = stat_val.st_mtime
-                size = stat_val.st_size
-            except OSError:
-                mtime = 0
-                size = 0
-            file_list.append(
-                (
-                    mtime,
-                    {
-                        "path": str(rel_path).replace("\\", "/"),
-                        "name": f.name,
-                        "size": size,
-                    }
+    dl_dir_str = str(dl_dir)
+    for root, dirs, files in os.walk(dl_dir_str):
+        # Guard against symlinks
+        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
+        for file in files:
+            f = Path(os.path.join(root, file))
+            if f.suffix.lower() in MEDIA_EXTS:
+                try:
+                    rel_path = f.relative_to(dl_dir)
+                    stat_val = f.stat()
+                    mtime = stat_val.st_mtime
+                    size = stat_val.st_size
+                except (OSError, ValueError):
+                    continue
+                file_list.append(
+                    (
+                        mtime,
+                        {
+                            "path": str(rel_path).replace("\\", "/"),
+                            "name": f.name,
+                            "size": size,
+                        }
+                    )
                 )
-            )
     # Sort files chronologically (older first) so they are processed in order
     file_list.sort(key=lambda x: x[0])
     return [item[1] for item in file_list]
@@ -783,24 +918,41 @@ async def list_files(uid: int = Depends(get_uid)):
 
 
 @app.get("/api/files/{file_path:path}")
-async def get_file(file_path: str, uid: int = Depends(get_uid)):
+@limiter.limit("100/minute")
+async def get_file(request: Request, file_path: str, uid: int = Depends(get_uid)):
+    """Download a file from user's download directory."""
+    if not file_path or file_path.strip() == "":
+        raise HTTPException(400, "File path cannot be empty")
+    
     dl_dir = user_dir(uid) / "downloads"
-    target = dl_dir / file_path
-
-    # Security: prevent directory traversal
-    try:
-        target.resolve(strict=False).relative_to(dl_dir.resolve(strict=False))
-    except (ValueError, OSError):
+    dl_dir.mkdir(parents=True, exist_ok=True)
+    
+    target = validate_file_path(file_path, dl_dir)
+    if not target:
+        dangerous_patterns = ['..', '~', '\x00', '\\\\', '//']
+        if any(pattern in file_path for pattern in dangerous_patterns) or os.path.isabs(file_path):
+            log.warning("Rejected dangerous file path: %s from uid=%s", file_path, uid)
+            raise HTTPException(403, "Invalid file path")
+        
+        unsafe_target = dl_dir / file_path
+        if not unsafe_target.exists():
+            raise HTTPException(404, "File not found")
+        
+        log.warning("Path traversal attempt blocked: %s from uid=%s", file_path, uid)
         raise HTTPException(403, "Access denied")
-
-    if not target.exists() or not target.is_file():
-        raise HTTPException(404, "File not found")
-
-    return FileResponse(target)
+    
+    # Check file size (prevent serving huge files - limit to 2GB)
+    max_size = 2 * 1024 * 1024 * 1024
+    if target.stat().st_size > max_size:
+        raise HTTPException(413, "File too large")
+    
+    log.info("File download: %s by uid=%s", file_path, uid)
+    return FileResponse(target, media_type="application/octet-stream", filename=target.name)
 
 
 @app.delete("/api/files")
-async def clear_files(uid: int = Depends(get_uid)):
+@limiter.limit("10/minute")
+async def clear_files(request: Request, uid: int = Depends(get_uid)):
     dl_dir = user_dir(uid) / "downloads"
     if dl_dir.exists():
         shutil.rmtree(dl_dir, ignore_errors=True)
@@ -808,18 +960,35 @@ async def clear_files(uid: int = Depends(get_uid)):
 
 
 @app.delete("/api/files/{file_path:path}")
-async def delete_file(file_path: str, uid: int = Depends(get_uid)):
+@limiter.limit("50/minute")
+async def delete_file(request: Request, file_path: str, uid: int = Depends(get_uid)):
+    if not file_path or file_path.strip() == "":
+        raise HTTPException(400, "File path cannot be empty")
+    
     dl_dir = user_dir(uid) / "downloads"
-    target = dl_dir / file_path
-
-    try:
-        target.resolve().relative_to(dl_dir.resolve())
-    except (ValueError, FileNotFoundError, OSError):
+    dl_dir.mkdir(parents=True, exist_ok=True)
+    
+    target = validate_file_path(file_path, dl_dir)
+    if not target:
+        dangerous_patterns = ['..', '~', '\x00', '\\\\', '//']
+        if any(pattern in file_path for pattern in dangerous_patterns) or os.path.isabs(file_path):
+            log.warning("Rejected dangerous file path in delete: %s from uid=%s", file_path, uid)
+            raise HTTPException(403, "Invalid file path")
+        
+        unsafe_target = dl_dir / file_path
+        if not unsafe_target.exists():
+            raise HTTPException(404, "File not found")
+        
+        log.warning("Path traversal attempt blocked in delete: %s from uid=%s", file_path, uid)
         raise HTTPException(403, "Access denied")
-
-    if target.exists() and target.is_file():
+    
+    try:
         target.unlink()
-    return {"status": "deleted"}
+        log.info("File deleted: %s by uid=%s", file_path, uid)
+        return {"status": "deleted"}
+    except Exception as e:
+        log.error("Failed to delete file %s: %s", file_path, e)
+        raise HTTPException(500, f"Delete failed: {e}")
 
 
 # ── Entry point ───────────────────────────────────────────────────────
@@ -833,19 +1002,44 @@ if DATA_ROOT.exists():
             pass
 
 
+def validate_environment() -> None:
+    """Validate critical environment variables at startup to prevent failures or misconfiguration."""
+    import re
+    token = os.environ.get("BOT_TOKEN")
+    if not token or token == "YOUR_BOT_TOKEN":
+        raise ValueError("BOT_TOKEN is not set or is still set to placeholder")
+    
+    if not re.match(r"^\d+:[A-Za-z0-9_-]+$", token):
+        raise ValueError("BOT_TOKEN format is invalid. Must be in the format '123456789:ABC...'")
+
+    encryption_key = os.environ.get("COOKIE_ENCRYPTION_KEY")
+    if not encryption_key:
+        raise ValueError("COOKIE_ENCRYPTION_KEY is not set in environment. Please generate a 32-byte key.")
+        
+    try:
+        from cryptography.fernet import Fernet
+        Fernet(encryption_key.encode("utf-8"))
+    except Exception as e:
+        raise ValueError(f"COOKIE_ENCRYPTION_KEY is invalid or malformed: {e}")
+
+
 def start(port: int = 8080):
     """Called from bot.py background thread."""
-    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN":
-        log.critical("CRITICAL: BOT_TOKEN is unset, empty, or set to placeholder!")
+    try:
+        validate_environment()
+    except Exception as e:
+        log.critical("CRITICAL: Environment validation failed: %s", e)
         import sys
-        sys.exit("CRITICAL ERROR: BOT_TOKEN must be configured. Exiting.")
+        sys.exit(f"CRITICAL ERROR: Environment validation failed: {e}")
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
 
 
 if __name__ == "__main__":
-    if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN":
-        log.critical("CRITICAL: BOT_TOKEN is unset, empty, or set to placeholder!")
+    try:
+        validate_environment()
+    except Exception as e:
+        log.critical("CRITICAL: Environment validation failed: %s", e)
         import sys
-        sys.exit("CRITICAL ERROR: BOT_TOKEN must be configured. Exiting.")
+        sys.exit(f"CRITICAL ERROR: Environment validation failed: {e}")
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")

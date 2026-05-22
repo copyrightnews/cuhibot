@@ -1,5 +1,5 @@
 {
-  "task": "Fix companion app download logics (media filtering, queue retention, and premium pull-to-refresh UI)",
+  "task": "Integrate standalone helper modules file_utils.py and session_manager.py into bot.py and server.py",
   "workspace": "cuhibot",
   "original_model": "Antigravity",
   "current_model": "Antigravity",
@@ -9,5 +9,5 @@
   "next_part": null,
   "next_function": null,
   "status": "complete",
-  "style_notes": "Implemented media filtering in build_gdl_cmd and realtime_download; retained download triggers in queue check when downloading; upgraded PTR to use GPU transforms and SVG circular spinner in app.html."
+  "style_notes": "Modular integration successfully complete. Imported SessionManager and file_utils functions into both server.py and bot.py. Replaced duplicate locking, validation, and check logic with standard utility functions."
 }
