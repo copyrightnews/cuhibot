@@ -1094,8 +1094,9 @@ async function submitTokenLogin() {
   const url = document.getElementById('login-url').value.trim();
   const token = document.getElementById('login-token').value.trim();
   if (!url || !token) return showToast('⚠️ Both Server URL and App Token are required');
-  // Simple token format validation (alphanumeric, 10+ characters)
-  if (!/^[A-Za-z0-9_-]{10,}$/.test(token)) return showToast('⚠️ Invalid token format');
+  // Token format validation: allow session tokens (cuhi_session_token_...) and other formats
+  // Minimum 10 characters, alphanumeric with underscores and hyphens
+  if (token.length < 10) return showToast('⚠️ Token too short (minimum 10 characters)');
   
   const normalizedUrl = url.replace(/\/$/, '');
   showToast('⏳ Validating token with server...');
