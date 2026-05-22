@@ -1,7 +1,7 @@
 {
   "name": "mobile_app",
-  "version": "2.3.0",
-  "versionCode": 4,
+  "version": "2.4.0",
+  "versionCode": 5,
   "description": "",
   "main": "index.js",
   "scripts": {
