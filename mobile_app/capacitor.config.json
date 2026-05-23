@@ -6,7 +6,9 @@
     "allowMixedContent": true
   },
   "server": {
-    "androidScheme": "https"
+    "androidScheme": "https",
+    "cleartext": true,
+    "hostname": "localhost"
   },
   "plugins": {
     "SplashScreen": {
