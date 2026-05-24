@@ -324,18 +324,6 @@ def write_profiles(uid: int, platform: str, urls: list[str]):
         p.write_text("\n".join(urls), encoding="utf-8")
 
 
-def count_downloaded_files(uid: int) -> int:
-    """Count files in user download dirs."""
-    total = 0
-    dl_root = user_dir(uid) / "downloads"
-    if dl_root.exists():
-        dl_root_str = str(dl_root)
-        for root, dirs, files in os.walk(dl_root_str):
-            dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
-            total += len(files)
-    return total
-
-
 def get_settings(uid: int) -> dict:
     return read_json(user_dir(uid) / "settings.json")
 
@@ -414,7 +402,6 @@ class DownloadTrigger(BaseModel):
     force: bool = False
     stories: bool = False
     highlights: bool = False
-    client: str = "telegram"
 
 
 class ChannelSet(BaseModel):
@@ -601,7 +588,6 @@ async def stats(user: dict = Depends(get_user)):
         },
         "cookies_active": cookies,
         "download_running": running,
-        "files_waiting": count_downloaded_files(uid),
         "username": user.get("username", ""),
         "first_name": user.get("first_name", ""),
         "email": user.get("email", ""),
@@ -816,7 +802,6 @@ async def trigger_download(request: Request, body: DownloadTrigger, uid: int = D
             "force": body.force,
             "stories": body.stories,
             "highlights": body.highlights,
-            "client": body.client,
         }
         trigger_path = user_dir(uid) / "download_trigger.json"
         write_json(trigger_path, trigger)
@@ -868,132 +853,7 @@ async def disk_info(uid: int = Depends(get_uid)):
     }
 
 
-# ── Files (For Android Native Download) ───────────────────────────────
 
-
-@app.get("/api/files")
-async def list_files(uid: int = Depends(get_uid)):
-    dl_dir = user_dir(uid) / "downloads"
-    if not dl_dir.exists():
-        return []
-
-    MEDIA_EXTS = {
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".gif",
-        ".webp",
-        ".bmp",
-        ".mp4",
-        ".webm",
-        ".mkv",
-        ".mov",
-        ".avi",
-        ".m4v",
-    }
-    file_list = []
-    dl_dir_str = str(dl_dir)
-    for root, dirs, files in os.walk(dl_dir_str):
-        # Guard against symlinks
-        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
-        for file in files:
-            f = Path(os.path.join(root, file))
-            if f.suffix.lower() in MEDIA_EXTS:
-                try:
-                    rel_path = f.relative_to(dl_dir)
-                    stat_val = f.stat()
-                    mtime = stat_val.st_mtime
-                    size = stat_val.st_size
-                except (OSError, ValueError):
-                    continue
-                file_list.append(
-                    (
-                        mtime,
-                        {
-                            "path": str(rel_path).replace("\\", "/"),
-                            "name": f.name,
-                            "size": size,
-                        }
-                    )
-                )
-    # Sort files chronologically (older first) so they are processed in order
-    file_list.sort(key=lambda x: x[0])
-    return [item[1] for item in file_list]
-
-
-
-@app.get("/api/files/{file_path:path}")
-@limiter.limit("100/minute")
-async def get_file(request: Request, file_path: str, uid: int = Depends(get_uid)):
-    """Download a file from user's download directory."""
-    if not file_path or file_path.strip() == "":
-        raise HTTPException(400, "File path cannot be empty")
-    
-    dl_dir = user_dir(uid) / "downloads"
-    dl_dir.mkdir(parents=True, exist_ok=True)
-    
-    target = validate_file_path(file_path, dl_dir)
-    if not target:
-        dangerous_patterns = ['..', '~', '\x00', '\\\\', '//']
-        if any(pattern in file_path for pattern in dangerous_patterns) or os.path.isabs(file_path):
-            log.warning("Rejected dangerous file path: %s from uid=%s", file_path, uid)
-            raise HTTPException(403, "Invalid file path")
-        
-        unsafe_target = dl_dir / file_path
-        if not unsafe_target.exists():
-            raise HTTPException(404, "File not found")
-        
-        log.warning("Path traversal attempt blocked: %s from uid=%s", file_path, uid)
-        raise HTTPException(403, "Access denied")
-    
-    # Check file size (prevent serving huge files - limit to 2GB)
-    max_size = 2 * 1024 * 1024 * 1024
-    if target.stat().st_size > max_size:
-        raise HTTPException(413, "File too large")
-    
-    log.info("File download: %s by uid=%s", file_path, uid)
-    return FileResponse(target, media_type="application/octet-stream", filename=target.name)
-
-
-@app.delete("/api/files")
-@limiter.limit("10/minute")
-async def clear_files(request: Request, uid: int = Depends(get_uid)):
-    dl_dir = user_dir(uid) / "downloads"
-    if dl_dir.exists():
-        shutil.rmtree(dl_dir, ignore_errors=True)
-    return {"status": "cleared"}
-
-
-@app.delete("/api/files/{file_path:path}")
-@limiter.limit("50/minute")
-async def delete_file(request: Request, file_path: str, uid: int = Depends(get_uid)):
-    if not file_path or file_path.strip() == "":
-        raise HTTPException(400, "File path cannot be empty")
-    
-    dl_dir = user_dir(uid) / "downloads"
-    dl_dir.mkdir(parents=True, exist_ok=True)
-    
-    target = validate_file_path(file_path, dl_dir)
-    if not target:
-        dangerous_patterns = ['..', '~', '\x00', '\\\\', '//']
-        if any(pattern in file_path for pattern in dangerous_patterns) or os.path.isabs(file_path):
-            log.warning("Rejected dangerous file path in delete: %s from uid=%s", file_path, uid)
-            raise HTTPException(403, "Invalid file path")
-        
-        unsafe_target = dl_dir / file_path
-        if not unsafe_target.exists():
-            raise HTTPException(404, "File not found")
-        
-        log.warning("Path traversal attempt blocked in delete: %s from uid=%s", file_path, uid)
-        raise HTTPException(403, "Access denied")
-    
-    try:
-        target.unlink()
-        log.info("File deleted: %s by uid=%s", file_path, uid)
-        return {"status": "deleted"}
-    except Exception as e:
-        log.error("Failed to delete file %s: %s", file_path, e)
-        raise HTTPException(500, f"Delete failed: {e}")
 
 
 # ── Entry point ───────────────────────────────────────────────────────

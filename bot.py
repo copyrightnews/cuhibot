@@ -1398,14 +1398,13 @@ async def realtime_download(
     except OSError as exc:
         msg = f"❌ Disk full. Tap 🗑️ Free disk or send /cleanup.\n`{exc}`"
         try:
-            if target != "android":
-                if hasattr(target, "reply_text"):
-                    await target.reply_text(msg, parse_mode="Markdown")
-                else:
-                    bot, cid = target
-                    await bot.send_message(
-                        chat_id=cid, text=msg, parse_mode="Markdown"
-                    )
+            if hasattr(target, "reply_text"):
+                await target.reply_text(msg, parse_mode="Markdown")
+            else:
+                bot, cid = target
+                await bot.send_message(
+                    chat_id=cid, text=msg, parse_mode="Markdown"
+                )
         except Exception:
             pass
         return 0
@@ -1704,8 +1703,8 @@ async def realtime_download(
         if ignore_archive:
             archive.unlink(missing_ok=True)
 
-        # For android client: keep files on disk so /api/files endpoint can serve them
-        if target != "android" and await asyncio.to_thread(out_dir.exists):
+        # Cleanup temporary files and directory
+        if await asyncio.to_thread(out_dir.exists):
             files = await asyncio.to_thread(lambda: list(out_dir.iterdir()))
             for f in files:
                 if f.is_file() and f.suffix.lower() not in ALL_MEDIA_EXT:
@@ -3074,7 +3073,6 @@ async def _run_miniapp_download(
         "files": "documents",
     }
     send_as = mode_map.get(mode, "mixed")
-    client = trigger.get("client", "telegram")
 
     # Determine which platforms to run
     platforms_to_run = list(PLATFORMS.keys())
@@ -3123,15 +3121,12 @@ async def _run_miniapp_download(
                     if stop_event.is_set():
                         break
 
-                    if client == "android":
-                        target = "android"
+                    # Use already-loaded settings to resolve channel/DM target
+                    channel = user_settings.get("channel")
+                    if channel:
+                        target = (bot, normalize_chat(channel))
                     else:
-                        # [FIXED] Use already-loaded settings, not a fresh read per URL
-                        channel = user_settings.get("channel")
-                        if channel:
-                            target = (bot, normalize_chat(channel))
-                        else:
-                            target = (bot, uid)  # DM to user
+                        target = (bot, uid)  # DM to user
 
                     sent = await realtime_download(
                         target=target,
@@ -3148,16 +3143,14 @@ async def _run_miniapp_download(
                     )
                     total_sent_count += sent
 
-        # Only notify via Telegram DM for Telegram clients
-        # Android client checks status via the app UI and /api/files endpoint
-        if client != "android":
-            try:
-                summary = f"✅ Mini App download complete — {total_sent_count} file(s) sent."
-                if stop_event.is_set():
-                    summary = f"⏹ Mini App download stopped — {total_sent_count} file(s) sent."
-                await bot.send_message(chat_id=uid, text=summary)
-            except Exception:
-                pass
+        # Notify user via Telegram DM
+        try:
+            summary = f"✅ Mini App download complete — {total_sent_count} file(s) sent."
+            if stop_event.is_set():
+                summary = f"⏹ Mini App download stopped — {total_sent_count} file(s) sent."
+            await bot.send_message(chat_id=uid, text=summary)
+        except Exception:
+            pass
 
     except Exception as exc:
         logger.exception("_run_miniapp_download error for uid=%s", uid)
@@ -3173,14 +3166,11 @@ async def _run_miniapp_download(
         # Clear v2 running flag
         flag = DATA_ROOT / str(uid) / "download_running"
         flag.unlink(missing_ok=True)
-        # [FIXED] For telegram clients, wipe the downloads staging directory after the
-        # run. Android clients need files to persist (served via /api/files endpoint).
-        # Without this, the server disk fills up silently on every Mini App run.
-        if client != "android":
-            try:
-                await asyncio.to_thread(wipe_downloads, uid)
-            except Exception as e:
-                logger.exception("Failed to wipe downloads for uid=%s: %s", uid, e)
+        # Wipe the downloads staging directory after the run to prevent disk filling
+        try:
+            await asyncio.to_thread(wipe_downloads, uid)
+        except Exception as e:
+            logger.exception("Failed to wipe downloads for uid=%s: %s", uid, e)
 
 
 async def miniapp_queue_worker(bot) -> None:

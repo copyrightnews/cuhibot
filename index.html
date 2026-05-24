@@ -1421,275 +1421,9 @@ async function updateHomeStats() {
     document.getElementById('disk-used').textContent = disk.used_gb + ' GB used';
     document.getElementById('disk-free').textContent = disk.free_gb + ' GB free';
     
-    // [FIXED] Sync if download is running OR if there are files waiting on the server.
-    // This guarantees all files are saved to the device even after the download ceases,
-    // and recovers unsynced files when the app is restarted.
-    if (isNativeApp && stats && (stats.download_running || (stats.files_waiting && stats.files_waiting > 0))) {
-      syncNativeFiles();
-    }
   } catch(e) { console.error('Poll error', e); }
 }
 // Duplicate visibilitychange listener removed; functionality covered by primary visibility listener.
-
-let isSyncing = false;
-let _syncPollTmr = null;
-
-// ── Capacitor 6 Filesystem helper ────────────────────────────────────
-function getCapFilesystem() {
-  // Capacitor 6+ native: window.Capacitor.Plugins.Filesystem
-  if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem) {
-    const FS = window.Capacitor.Plugins.Filesystem;
-    // Directory enum values for Capacitor 6
-    const Dir = { Documents: 'DOCUMENTS', External: 'EXTERNAL', ExternalStorage: 'EXTERNAL_STORAGE' };
-    return { Filesystem: FS, Directory: Dir };
-  }
-  // Capacitor 3/4 fallback
-  if (window.CapacitorFilesystem && window.CapacitorFilesystem.Filesystem) {
-    return window.CapacitorFilesystem;
-  }
-  return null;
-}
-
-// Request storage permission — called at startup AND before every sync
-async function requestStoragePermission() {
-  if (!window.Capacitor || !window.Capacitor.isNativePlatform || !window.Capacitor.isNativePlatform()) return true;
-  
-  // Proactively request Filesystem permission if needed
-  const cap = getCapFilesystem();
-  if (cap) {
-    try {
-      const status = await cap.Filesystem.checkPermissions();
-      if (status && status.publicStorage !== 'granted') {
-        await cap.Filesystem.requestPermissions();
-      }
-    } catch(e) {
-      console.error('Filesystem permission check/request failed', e);
-    }
-  }
-
-  // Proactively request Media permission if available
-  const Media = window.Capacitor.Plugins && window.Capacitor.Plugins.Media;
-  if (Media) {
-    try {
-      let status = await Media.checkPermissions();
-      const isGranted = (s) => s === 'granted';
-      
-      // On Android 13+ (API 33+), check photos/videos permissions. On older, check publicStorage.
-      const hasPerm = status && (isGranted(status.publicStorage) || isGranted(status.photos) || isGranted(status.videos));
-      if (!hasPerm) {
-        await Media.requestPermissions();
-      }
-    } catch(e) {
-      console.error('Media permission check/request failed', e);
-    }
-  }
-
-  // ALWAYS return true to prevent false-positive permission blocks on Android 11+ Scoped Storage.
-  // Filesystem writes to scoped Documents/CuhiBot folders will work natively, and Media writes are wrapped in safe try/catch.
-  return true;
-}
-
-// Called once at app boot to request permission proactively
-async function initNativePermission() {
-  if (!window.Capacitor || !window.Capacitor.isNativePlatform || !window.Capacitor.isNativePlatform()) return;
-  const granted = await requestStoragePermission();
-  if (!granted) {
-    showToast('⚠️ Storage & Media permissions needed to save to gallery');
-  }
-}
-
-// [FIXED] Track already-synced files to prevent duplicate gallery saves
-const _syncedFiles = new Set(JSON.parse(localStorage.getItem('cuhi_synced_files') || '[]'));
-function _markSynced(key) {
-  _syncedFiles.add(key);
-  // Keep only last 2000 entries to prevent unbounded growth
-  if (_syncedFiles.size > 2000) {
-    const arr = Array.from(_syncedFiles);
-    const trimmed = arr.slice(arr.length - 1500);
-    _syncedFiles.clear();
-    trimmed.forEach(k => _syncedFiles.add(k));
-  }
-  localStorage.setItem('cuhi_synced_files', JSON.stringify(Array.from(_syncedFiles)));
-}
-
-async function syncNativeFiles() {
-  // Only run inside the native Capacitor Android/iOS container
-  if (!window.Capacitor || !window.Capacitor.isNativePlatform || !window.Capacitor.isNativePlatform()) return;
-  const cap = getCapFilesystem();
-  if (!cap) {
-    console.error('Capacitor Filesystem not available');
-    return;
-  }
-  if (isSyncing) return;
-  isSyncing = true;
-
-  try {
-    // Always re-check permission (handles case where user granted it manually)
-    const granted = await requestStoragePermission();
-    if (!granted) {
-      document.getElementById('dl-status-info').textContent = '⚠️ Storage permission denied — enable in Settings.';
-      return;
-    }
-
-    const { Filesystem, Directory } = cap;
-    const files = await callApi('GET', '/api/files');
-
-    if (!files || files.length === 0) return;
-
-    document.getElementById('dl-status-info').textContent = 'Saving ' + files.length + ' file(s) to phone...';
-
-    let saved = 0;
-    for (const file of files) {
-      // [FIXED] Build a dedup key from path + size to skip already-synced files
-      const dedupKey = file.path + '::' + file.size;
-      if (_syncedFiles.has(dedupKey)) {
-        try {
-          await callApi('DELETE', '/api/files/' + file.path.split('/').map(encodeURIComponent).join('/'));
-        } catch(delErr) {
-          console.error('Cleanup delete for already-synced file failed', file.path, delErr);
-        }
-        continue;
-      }
-      try {
-        // [FIXED] Use shared getAuthHeaders() — fixes 401 for session-token users
-        const downloadUrl = API_BASE + '/api/files/' + file.path.split('/').map(encodeURIComponent).join('/');
-
-        const resp = await fetch(downloadUrl, {
-          headers: getAuthHeaders()
-        });
-        if (!resp.ok) throw new Error('HTTP ' + resp.status);
-
-        // Convert to base64 in chunks to avoid btoa stack overflow on large files
-        const arrayBuf = await resp.arrayBuffer();
-        const bytes = new Uint8Array(arrayBuf);
-        let binary = '';
-        const CHUNK = 8192;
-        for (let i = 0; i < bytes.byteLength; i += CHUNK) {
-          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
-        }
-        const base64 = btoa(binary);
-
-        const localPath = 'CuhiBot/' + file.path;
-        await Filesystem.writeFile({
-          path: localPath,
-          data: base64,
-          directory: Directory.Documents,
-          recursive: true
-        });
-
-        // ── Save to device Gallery/Photos ─────────────────────────────────────
-        // [FIXED] Only save to gallery if not already synced (prevents duplicates)
-        if (!_syncedFiles.has(dedupKey)) {
-          try {
-            const Media = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Media;
-            if (Media) {
-              const ext = file.path.split('.').pop().toLowerCase();
-              let mime = 'image/jpeg';
-              let isVid = false;
-              if (['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp'].includes(ext)) {
-                mime = 'video/' + (ext === 'mov' ? 'quicktime' : ext);
-                isVid = true;
-              } else if (ext === 'png') {
-                mime = 'image/png';
-              } else if (ext === 'gif') {
-                mime = 'image/gif';
-              } else if (ext === 'webp') {
-                mime = 'image/webp';
-              }
-              const dataUri = `data:${mime};base64,${base64}`;
-
-              // Find or create album 'CuhiBot'
-              let albumId = null;
-              try {
-                const { albums } = await Media.getAlbums();
-                const existing = albums.find(a => a.name.toLowerCase() === 'cuhibot');
-                if (existing) {
-                  albumId = existing.identifier;
-                } else {
-                  await Media.createAlbum({ name: 'CuhiBot' });
-                  const { albums: newAlbums } = await Media.getAlbums();
-                  const created = newAlbums.find(a => a.name.toLowerCase() === 'cuhibot');
-                  if (created) albumId = created.identifier;
-                }
-              } catch(albumErr) {
-                console.error('Error with album setup', albumErr);
-              }
-
-              const fileNameNoExt = file.path.split('/').pop().replace(/\.[^/.]+$/, "");
-              const saveOpts = {
-                path: dataUri,
-                fileName: fileNameNoExt
-              };
-              if (albumId) {
-                saveOpts.albumIdentifier = albumId;
-              }
-
-              if (isVid) {
-                await Media.saveVideo(saveOpts);
-              } else {
-                await Media.savePhoto(saveOpts);
-              }
-              console.log('Successfully saved to device Gallery:', file.path);
-            }
-          } catch(mediaErr) {
-            console.error('Failed to save to device gallery:', file.path, mediaErr);
-          }
-        }
-
-        // Mark as synced BEFORE deleting from server — even if DELETE fails,
-        // the file won't be re-saved to gallery on the next sync cycle
-        _markSynced(dedupKey);
-
-        // Remove from server only after confirmed local write
-        await callApi('DELETE', '/api/files/' + file.path.split('/').map(encodeURIComponent).join('/'));
-        saved++;
-
-      } catch(err) {
-        console.error('Failed to sync file', file.path, err);
-        // [FIXED] Even if download/save failed, try to delete from server
-        // to prevent infinite retry loops on permanently-broken files
-        if (_syncedFiles.has(dedupKey)) {
-          try {
-            await callApi('DELETE', '/api/files/' + file.path.split('/').map(encodeURIComponent).join('/'));
-          } catch(delErr) {
-            console.error('Cleanup delete also failed', file.path, delErr);
-          }
-        }
-      }
-    }
-
-    if (saved > 0) {
-      showToast('✅ ' + saved + ' file(s) saved to phone');
-      document.getElementById('dl-status-info').textContent = 'Saved ' + saved + ' file(s) → Documents/CuhiBot';
-    }
-  } catch(e) {
-    console.error('Sync loop error', e);
-  } finally {
-    isSyncing = false;
-  }
-}
-
-// Poll for server-side files after download starts (runs for up to 3 min)
-function startSyncPolling() {
-  if (_syncPollTmr) return;
-  let attempts = 0;
-  const MAX_ATTEMPTS = 45; // 45 × 4s = 3 minutes
-  _syncPollTmr = setInterval(async () => {
-    attempts++;
-    await syncNativeFiles();
-    if (attempts >= MAX_ATTEMPTS) {
-      clearInterval(_syncPollTmr);
-      _syncPollTmr = null;
-    }
-  }, 4000);
-}
-
-function stopSyncPolling() {
-  if (_syncPollTmr) {
-    clearInterval(_syncPollTmr);
-    _syncPollTmr = null;
-  }
-}
 
 function startHomePolling() {
   updateHomeStats();
@@ -1863,27 +1597,14 @@ async function startDownload() {
   `;
 
   try {
-    // On native: ensure permission before starting anything
-    if (isNativeApp) {
-      const granted = await requestStoragePermission();
-      if (!granted) {
-        showToast('⚠️ Storage permission required');
-        return;
-      }
-    }
     await callApi('POST', '/api/download', {
       media_type: document.getElementById('dl-media-type').value,
       stories: document.getElementById('dl-stories').checked,
       highlights: document.getElementById('dl-highlights').checked,
-      force: document.getElementById('dl-force').checked,
-      client: isNativeApp ? 'android' : 'telegram'
+      force: document.getElementById('dl-force').checked
     });
     showToast('Download started');
     updateHomeStats();
-    // On native: begin polling server for completed files
-    if (isNativeApp) {
-      startSyncPolling();
-    }
     (tg && tg.HapticFeedback && tg.HapticFeedback.impactOccurred('medium'));
   } catch(e) { 
     showToast(e.message); 
@@ -1897,7 +1618,6 @@ async function stopDownload() {
   try {
     await callApi('POST', '/api/download/stop');
     showToast('Stop signal sent');
-    stopSyncPolling();
     updateHomeStats();
     (tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred('warning'));
   } catch(e) { showToast(e.message); }
@@ -1936,22 +1656,6 @@ async function clearHistory() {
 
 async function loadSettings() {
   try {
-    if (isNativeApp) {
-      const cookies = await callApi('GET', '/api/cookies');
-      const container = document.getElementById('settings-cookie-status');
-      container.innerHTML = cookies.map(c => `
-        <div class="cell">
-          <div class="cell-body"><div class="cell-label" style="font-weight:500;">${(c.platform || 'unknown').charAt(0).toUpperCase() + (c.platform || 'unknown').slice(1)}</div></div>
-          <div class="cell-right" style="color:${c.has_cookie ? 'var(--green)' : 'var(--red)'}; font-size:13px; font-weight:700; padding:4px 8px; background:var(--bg-tertiary); border-radius:6px;">
-            ${c.has_cookie ? 'ACTIVE' : 'MISSING'}
-          </div>
-        </div>
-      `).join('');
-      const botSettings = document.getElementById('bot-only-settings');
-      if (botSettings) botSettings.style.display = 'none';
-      return;
-    }
-    
     const botSettings = document.getElementById('bot-only-settings');
     if (botSettings) botSettings.style.display = 'block';
 
