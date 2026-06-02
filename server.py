@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import secrets
+import sys
 
 # Load .env file manually if exists (no-dependency dotenv fallback supporting multi-line strings)
 try:
@@ -120,7 +121,6 @@ def locked_file(target: Path):
     """TOCTOU-safe, OS-level file lock wrapper that works on both Windows and Linux/Unix.
     Matches the locking mechanism of bot.py to prevent race conditions.
     """
-    import sys
     target.parent.mkdir(parents=True, exist_ok=True)
     lock_path = target.with_suffix(target.suffix + ".lock")
     fp = open(lock_path, "a+", encoding="utf-8")
@@ -378,7 +378,7 @@ class ScheduleSet(BaseModel):
 
 
 # ── FastAPI app & CORS Configuration ─────────────────────────────────────
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from fastapi.responses import JSONResponse
@@ -392,7 +392,6 @@ limiter = Limiter(
 
 app = FastAPI(docs_url=None, redoc_url=None)
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 @app.exception_handler(RateLimitExceeded)
 async def custom_rate_limit_handler(request: Request, exc: RateLimitExceeded):

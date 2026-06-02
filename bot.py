@@ -41,6 +41,7 @@ import logging
 import hashlib
 import hmac
 import os
+import secrets
 
 # Load .env file manually if exists (no-dependency dotenv fallback supporting multi-line strings)
 try:
@@ -114,9 +115,10 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor
+from crypto_utils import get_crypto
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -470,10 +472,6 @@ def decrypted_cookie_context(cookie_path: Path):
     If it's already a plaintext .txt file (or missing), yield it as is.
     """
     if cookie_path.suffix == ".enc" and cookie_path.exists():
-        import secrets
-        from crypto_utils import get_crypto
-        
-        # Generate a secure temporary path
         tmp_name = f"cookie_{secrets.token_hex(8)}.tmp"
         tmp_path = cookie_path.parent / tmp_name
         
@@ -541,7 +539,7 @@ async def write_profiles(uid: int, platform: str, urls: Iterable[str]) -> None:
 
 
 def _atomic_edit_profiles_sync(
-    uid: int, platform: str, func: callable
+    uid: int, platform: str, func: Callable
 ) -> None:
     path = profiles_path(uid, platform)
     with locked_file(path):
@@ -664,9 +662,12 @@ def _cookie_summary_sync(uid: int) -> str:
     ok = []
     for p in PLATFORMS:
         _, cookie_name, _ = PLATFORMS[p]
-        user_c = cdir(uid) / cookie_name
-        global_c = global_cookie_dir() / cookie_name
-        if user_c.exists() or global_c.exists():
+        cookie_enc_name = cookie_name.replace('.txt', '.enc')
+        user_c_txt = cdir(uid) / cookie_name
+        user_c_enc = cdir(uid) / cookie_enc_name
+        global_c_txt = global_cookie_dir() / cookie_name
+        global_c_enc = global_cookie_dir() / cookie_enc_name
+        if user_c_txt.exists() or user_c_enc.exists() or global_c_txt.exists() or global_c_enc.exists():
             ok.append(p)
     return ", ".join(ok) if ok else "none"
 
@@ -1420,8 +1421,6 @@ async def realtime_download(
     temp_cookie_to_purge = None
     
     if cookie.suffix == ".enc" and cookie.exists():
-        import secrets
-        from crypto_utils import get_crypto
         tmp_name = f"cookie_{secrets.token_hex(8)}.tmp"
         temp_cookie_to_purge = cookie.parent / tmp_name
         try:
@@ -1430,8 +1429,11 @@ async def realtime_download(
             if decrypted_data:
                 temp_cookie_to_purge.write_text(decrypted_data, encoding="utf-8")
                 active_cookie_path = temp_cookie_to_purge
+            else:
+                active_cookie_path = cookie.parent / f".cookie_decrypt_empty_{secrets.token_hex(4)}"
         except Exception as e:
             logger.error("Failed to decrypt cookie in realtime_download: %s", e)
+            active_cookie_path = cookie.parent / f".cookie_decrypt_failed_{secrets.token_hex(4)}"
 
     cmd, _ = build_gdl_cmd(
         out_dir=out_dir,
@@ -2023,24 +2025,36 @@ async def handle_document(
         return
 
     platform, cookie_name = matched
-    dest = cdir(uid) / cookie_name
+    cookie_enc_name = cookie_name.replace('.txt', '.enc')
+    dest_txt = cdir(uid) / cookie_name
+    dest_enc = cdir(uid) / cookie_enc_name
     try:
         tg_file = await doc.get_file()
-        await tg_file.download_to_drive(str(dest))
+        await tg_file.download_to_drive(str(dest_txt))
     except Exception:
         logger.exception("Cookie download failed for uid=%s", uid)
         await update.message.reply_text("❌ Failed to save the cookie file.")
         return
     try:
-        actual_size = dest.stat().st_size
+        actual_size = dest_txt.stat().st_size
         if actual_size > MAX_COOKIE_FILE_BYTES:
-            dest.unlink(missing_ok=True)
+            dest_txt.unlink(missing_ok=True)
             await update.message.reply_text(f"⚠️ Cookie file too large.")
             return
     except OSError:
         pass
+    try:
+        crypto = get_crypto()
+        enc_data = crypto.encrypt_cookie(dest_txt.read_text(encoding="utf-8"))
+        dest_enc.write_bytes(enc_data)
+    except Exception:
+        logger.exception("Cookie encryption failed for uid=%s", uid)
+        await update.message.reply_text("⚠️ Cookie saved but encryption failed; stored as plaintext.")
+        await send_menu(update.message, uid, uname, name)
+        return
+    dest_txt.unlink(missing_ok=True)
     await update.message.reply_text(
-        f"🍪 Cookies saved for *{platform.capitalize()}*.",
+        f"🍪 Cookies saved and encrypted for *{platform.capitalize()}*.",
         parse_mode="Markdown",
     )
     await send_menu(update.message, uid, uname, name)
@@ -2347,6 +2361,9 @@ async def handle_callback(
         ev = STOP_EVENTS.get(uid)
         if ev:
             ev.set()
+            await q.answer("⏹️ Download stopped", show_alert=False)
+        else:
+            await q.answer("No active download to stop", show_alert=True)
         return
 
     if data == "m_history":
@@ -2693,7 +2710,6 @@ def bootstrap_env_cookies() -> None:
     dest_dir.mkdir(parents=True, exist_ok=True)
     
     try:
-        from crypto_utils import get_crypto
         crypto = get_crypto()
     except Exception as e:
         logger.error("Failed to initialize cryptographic cipher during bootstrap: %s", e)
