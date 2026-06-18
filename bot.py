@@ -999,7 +999,7 @@ async def render_menu(uid: int, username: str, name: str) -> str:
         "━ Add a data source (Instagram, TikTok, etc.)\n"
         "━ Configure your output channel and cookies\n"
         "━ Cuhi Bot will forward and download posts automatically\n"
-        "🌐 Github.com/copyrightnews/cuhibot\n"
+
         "━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"@{safe_username}, {safe_name}\n"
         f"👤 ID: `{uid}`\n"
